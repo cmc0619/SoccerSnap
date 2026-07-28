@@ -9,7 +9,9 @@ import uuid
 from pathlib import Path
 from typing import Callable
 
+from soccersnap.paths import UnsafePathError, resolve_within
 from soccersnap.protocol.checksum import sha256_file, verify_checksum
+from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
 from soccersnap.protocol.manifests import SessionManifest, load_manifest, mark_offloaded
 
 # PROTOCOL.md retry table
@@ -44,21 +46,19 @@ def store_upload(
 ) -> dict:
     """Server-side: receive file, verify SHA-256, store under sessions/{id}/{cam}/."""
     # Keep filesystem writes inside sessions_dir even if callers skip HTTP validation.
-    if not session_id or not camera_id:
-        raise OffloadError("Invalid session_id or camera_id")
-    for value in (session_id, camera_id):
-        if ".." in value or "/" in value or "\\" in value:
-            raise OffloadError("Invalid session_id or camera_id")
-    if camera_id not in {"CAM_L", "CAM_C", "CAM_R"}:
-        raise OffloadError("Invalid camera_id")
+    try:
+        validate_session_id(session_id)
+        validate_camera_id(camera_id)
+    except InvalidIdError as exc:
+        raise OffloadError(str(exc)) from exc
 
     if not verify_checksum(source_file, checksum_hex):
         raise OffloadError("Checksum mismatch on upload")
 
-    sessions_root = sessions_dir.resolve()
-    dest_dir = (sessions_root / session_id / camera_id).resolve()
-    if not str(dest_dir).startswith(str(sessions_root)):
-        raise OffloadError("Invalid destination path")
+    try:
+        dest_dir = resolve_within(sessions_dir, session_id, camera_id)
+    except UnsafePathError as exc:
+        raise OffloadError("Invalid destination path") from exc
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_media = dest_dir / "recording.mp4"
     dest_manifest = dest_dir / "manifest.json"

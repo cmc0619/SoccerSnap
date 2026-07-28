@@ -13,6 +13,7 @@ from soccersnap.config import settings
 from soccersnap.db import init_db, session_scope
 from soccersnap.demo.seed import seed_demo
 from soccersnap.models import Game
+from soccersnap.paths import is_safe_name
 from soccersnap.portal.app import create_portal_router
 from soccersnap.process.app import create_process_router
 from soccersnap.process.pipeline import ProcessPipeline
@@ -20,7 +21,9 @@ from soccersnap.rig.app import create_rig_router
 from soccersnap.rig.coordinator import FleetCoordinator
 from soccersnap.security import (
     PortalPrincipal,
+    admin_credentials_valid,
     assert_game_access,
+    basic_auth_required,
     basic_security,
     require_ops,
     require_portal_user,
@@ -82,37 +85,20 @@ def create_demo_app() -> FastAPI:
         credentials: HTTPBasicCredentials | None = Depends(basic_security),
     ):
         """Return ops key only after admin basic auth — never expose it publicly."""
-        if credentials is None or not (
-            credentials.username == settings.admin_user
-            and credentials.password == settings.admin_password
-        ):
-            raise HTTPException(
-                status_code=401,
-                detail="Admin credentials required",
-                headers={"WWW-Authenticate": "Basic"},
-            )
+        if not admin_credentials_valid(credentials):
+            raise basic_auth_required("Admin credentials required")
         return {"ops_api_key": settings.ops_api_key}
 
     @app.post("/api/demo/run-match", dependencies=[Depends(require_ops)])
     def run_match(delay_sec: float = 0.05, duration_sec: float = 4.0, opponent: str = "Rivals"):
         """One-shot: scheduled start → stop → PROTOCOL ingest/process → ready game."""
-        from soccersnap.db import SessionLocal
-
         start = coordinator.start_all(delay_sec=delay_sec)
         if not start.get("success"):
             raise HTTPException(status_code=409, detail=start)
         stop = coordinator.stop_all(duration_sec=duration_sec)
         session_id = stop["session_id"]
-        assert SessionLocal is not None
-        db = SessionLocal()
-        try:
+        with session_scope() as db:
             processed = pipeline.process_session(session_id, db=db, opponent=opponent)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
         return {"start": start, "stop": stop, "processed": processed}
 
     media_dir = settings.media_dir
@@ -125,22 +111,16 @@ def create_demo_app() -> FastAPI:
         principal: PortalPrincipal = Depends(require_portal_user),
     ):
         # Path traversal guard
-        if "/" in name or "\\" in name or name.startswith("."):
+        if not is_safe_name(name):
             raise HTTPException(status_code=400, detail="Invalid media name")
         path = media_dir / name
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="Not found")
-        from soccersnap.db import SessionLocal
-
-        assert SessionLocal is not None
-        db = SessionLocal()
-        try:
+        with session_scope() as db:
             game = db.query(Game).filter(Game.video_path == f"/media/{name}").one_or_none()
             if game is None:
                 raise HTTPException(status_code=404, detail="Media not linked to a game")
             assert_game_access(principal, game)
-        finally:
-            db.close()
         return FileResponse(path, media_type="video/mp4" if name.endswith(".mp4") else "application/octet-stream")
 
     if (WEB_ROOT / "field").exists():

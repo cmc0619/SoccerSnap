@@ -9,7 +9,9 @@ from sqlalchemy.orm import Session
 
 from soccersnap.config import settings
 from soccersnap.db import get_session
-from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
+from soccersnap.http_utils import validated_ids
+from soccersnap.paths import UnsafePathError, resolve_within
+from soccersnap.protocol.ids import InvalidIdError
 from soccersnap.protocol.manifests import SessionManifest
 from soccersnap.protocol.offload import OffloadError, confirm_upload, store_upload
 from soccersnap.protocol.schemas import UploadConfirmRequest
@@ -21,15 +23,6 @@ from soccersnap.security import require_ops
 class ProcessRequest(BaseModel):
     session_id: str
     opponent: str = "Rivals"
-
-
-def _http_ids(session_id: str | None = None, camera_id: str | None = None) -> tuple[str | None, str | None]:
-    try:
-        sid = validate_session_id(session_id) if session_id is not None else None
-        cam = validate_camera_id(camera_id) if camera_id is not None else None
-        return sid, cam
-    except InvalidIdError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 async def _stream_upload_to_temp(file: UploadFile, dest: Path, max_bytes: int) -> int:
@@ -80,13 +73,15 @@ def create_process_router(
         manifest: str | None = Form(None),
     ):
         settings.ensure_dirs()
-        session_id, camera_id = _http_ids(session_id, camera_id)
+        session_id, camera_id = validated_ids(session_id, camera_id)
         assert session_id and camera_id
         upload_id = uuid.uuid4().hex
-        staging_root = (settings.staging_dir / "uploads").resolve()
-        tmp = staging_root / upload_id / f"{session_id}_{camera_id}.mp4"
-        if not str(tmp.resolve()).startswith(str(staging_root)):
-            raise HTTPException(status_code=400, detail="Invalid upload path")
+        try:
+            tmp = resolve_within(
+                settings.staging_dir / "uploads", upload_id, f"{session_id}_{camera_id}.mp4"
+            )
+        except UnsafePathError as exc:
+            raise HTTPException(status_code=400, detail="Invalid upload path") from exc
         try:
             await _stream_upload_to_temp(file, tmp, settings.max_upload_bytes)
             parsed = SessionManifest.model_validate_json(manifest) if manifest else None
@@ -113,7 +108,7 @@ def create_process_router(
 
     @router.post("/upload/confirm", dependencies=[Depends(require_ops)])
     def upload_confirm(body: UploadConfirmRequest):
-        session_id, camera_id = _http_ids(body.session_id, body.camera_id)
+        session_id, camera_id = validated_ids(body.session_id, body.camera_id)
         assert session_id and camera_id
         try:
             return confirm_upload(
@@ -125,7 +120,7 @@ def create_process_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     def _run_process(body: ProcessRequest, db: Session):
-        session_id, _ = _http_ids(body.session_id, None)
+        session_id, _ = validated_ids(body.session_id)
         assert session_id
         try:
             return pipe.process_session(session_id, db=db, opponent=body.opponent)

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+
+from soccersnap.timeutils import iso_utc, utcnow
 
 from .checksum import sha256_file
 
@@ -165,7 +167,7 @@ def create_manifest(
     hostname: str | None = None,
 ) -> SessionManifest:
     cam = CameraId(camera_id)
-    start = scheduled_start or datetime.now(timezone.utc)
+    start = scheduled_start or utcnow()
     end = start + timedelta(seconds=duration_sec)
     recording_id = f"{session_id}_{cam.value}"
     size = media_path.stat().st_size if media_path.exists() else 0
@@ -187,15 +189,11 @@ def create_manifest(
             duration_sec=duration_sec,
         ),
         timing=TimingBlock(
-            start_time=start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-            end_time=end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            start_time=iso_utc(start),
+            end_time=iso_utc(end),
             ntp_synced=True,
             sync_offset_ms=offset_ms,
-            scheduled_start=(
-                scheduled_start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-                if scheduled_start
-                else None
-            ),
+            scheduled_start=iso_utc(scheduled_start),
         ),
         checksum=ChecksumBlock(value=sha256_file(media_path)),
         device=DeviceBlock(

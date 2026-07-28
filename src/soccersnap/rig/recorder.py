@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from soccersnap.config import settings
+from soccersnap.ffmpeg import H264_OUTPUT_ARGS, run_ffmpeg
 from soccersnap.protocol.checksum import verify_checksum
 from soccersnap.protocol.manifests import (
     CameraId,
@@ -19,6 +19,7 @@ from soccersnap.protocol.manifests import (
 )
 from soccersnap.protocol.schemas import ConfirmRequest, DiskStatus, SyncStatus
 from soccersnap.rig.framing import assess_framing
+from soccersnap.timeutils import iso_utc
 
 
 @dataclass
@@ -76,19 +77,10 @@ class RecorderFleet:
                     "offset_ms": node.offset_ms,
                     "temperature_c": node.temperature_c,
                     "battery_percent": node.battery_percent,
-                    "scheduled_start": (
-                        node.scheduled_start.isoformat().replace("+00:00", "Z")
-                        if node.scheduled_start
-                        else None
-                    ),
+                    "scheduled_start": iso_utc(node.scheduled_start),
                     "sync": sync.model_dump(mode="json"),
                     "disk": self.disk_status().model_dump(),
-                    "framing": {
-                        "quality": framing.quality.value,
-                        "score": framing.score,
-                        "message": framing.message,
-                        "tone_hz": framing.tone_hz,
-                    },
+                    "framing": framing.as_dict(),
                 }
             )
         return {
@@ -104,33 +96,30 @@ class RecorderFleet:
 
     def _write_simulated_clip(self, path: Path, duration_sec: float, label: str) -> None:
         duration_sec = max(2.0, float(duration_sec))
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            f"color=c=0x0B3D2E:s=1280x720:d={duration_sec}",
-            "-f",
-            "lavfi",
-            "-i",
-            f"sine=frequency=440:duration={min(0.4, duration_sec)}",
-            "-vf",
-            (
-                f"drawtext=text='SoccerSnap {label}':fontsize=48:fontcolor=white:"
-                "x=(w-text_w)/2:y=(h-text_h)/2,"
-                "drawgrid=width=160:height=90:thickness=1:color=white@0.15"
-            ),
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-shortest",
-            str(path),
-        ]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        run_ffmpeg(
+            [
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=0x0B3D2E:s=1280x720:d={duration_sec}",
+                "-f",
+                "lavfi",
+                "-i",
+                f"sine=frequency=440:duration={min(0.4, duration_sec)}",
+                "-vf",
+                (
+                    f"drawtext=text='SoccerSnap {label}':fontsize=48:fontcolor=white:"
+                    "x=(w-text_w)/2:y=(h-text_h)/2,"
+                    "drawgrid=width=160:height=90:thickness=1:color=white@0.15"
+                ),
+                *H264_OUTPUT_ARGS,
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(path),
+            ],
+            timeout=120,
+        )
 
     def start(self, session_id: str, scheduled_start: datetime | None = None) -> dict:
         if any(n.recording for n in self.nodes.values()):

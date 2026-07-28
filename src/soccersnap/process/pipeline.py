@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from soccersnap.models import CameraAsset, Game, GameEvent
-from soccersnap.protocol.ids import validate_camera_id, validate_session_id
+from soccersnap.paths import UnsafePathError, free_gb, is_safe_name, resolve_within
+from soccersnap.protocol.ids import CAMERA_IDS, validate_camera_id, validate_session_id
 from soccersnap.protocol.manifests import load_manifest
 from soccersnap.protocol.offload import OffloadError, confirm_upload, store_upload
 from soccersnap.process.events import detect_demo_events
 from soccersnap.process.stitcher import stitch_hstack
+
+
+def _within(root: Path, *parts: str | Path, what: str) -> Path:
+    try:
+        return resolve_within(root, *parts)
+    except UnsafePathError as exc:
+        raise OffloadError(f"Invalid {what} path") from exc
 
 
 class ProcessPipeline:
@@ -31,18 +38,15 @@ class ProcessPipeline:
     ) -> dict:
         session_id = validate_session_id(session_id)
         camera_id = validate_camera_id(camera_id)
-        recordings_root = self.recordings_dir.resolve()
-        manifest_path = (recordings_root / f"{session_id}_{camera_id}.json").resolve()
-        if not str(manifest_path).startswith(str(recordings_root)):
-            raise OffloadError("Invalid recording path")
+        manifest_path = _within(
+            self.recordings_dir, f"{session_id}_{camera_id}.json", what="recording"
+        )
         if not manifest_path.exists():
             raise FileNotFoundError(f"Manifest missing for {session_id}/{camera_id}")
         manifest = load_manifest(manifest_path)
-        if "/" in manifest.file_name or "\\" in manifest.file_name or ".." in manifest.file_name:
+        if not is_safe_name(manifest.file_name):
             raise OffloadError("Invalid media file name in manifest")
-        media = (recordings_root / manifest.file_name).resolve()
-        if not str(media).startswith(str(recordings_root)):
-            raise OffloadError("Invalid recording media path")
+        media = _within(self.recordings_dir, manifest.file_name, what="recording media")
         if not media.exists():
             raise FileNotFoundError(f"Media missing: {media}")
 
@@ -89,7 +93,7 @@ class ProcessPipeline:
     def ingest_session(self, session_id: str, *, db: Session | None = None) -> list[dict]:
         session_id = validate_session_id(session_id)
         results = []
-        for cam in ("CAM_L", "CAM_C", "CAM_R"):
+        for cam in CAMERA_IDS:
             path = self.recordings_dir / f"{session_id}_{cam}.json"
             if path.exists():
                 results.append(self.ingest_from_rig(session_id, cam, db=db))
@@ -99,31 +103,27 @@ class ProcessPipeline:
 
     def process_session(self, session_id: str, *, db: Session, opponent: str = "Rivals") -> dict:
         session_id = validate_session_id(session_id)
-        sessions_root = self.sessions_dir.resolve()
-        media_root = self.media_dir.resolve()
         ingested = self.ingest_session(session_id, db=db)
         cam_paths = []
         duration = 0.0
-        for cam in ("CAM_L", "CAM_C", "CAM_R"):
-            media = (sessions_root / session_id / cam / "recording.mp4").resolve()
-            if not str(media).startswith(str(sessions_root)):
-                raise OffloadError("Invalid session media path")
+        for cam in CAMERA_IDS:
+            media = _within(
+                self.sessions_dir, session_id, cam, "recording.mp4", what="session media"
+            )
             if media.exists():
                 cam_paths.append(media)
-                manifest_path = sessions_root / session_id / cam / "manifest.json"
+                manifest_path = media.parent / "manifest.json"
                 if manifest_path.exists():
                     duration = max(duration, load_manifest(manifest_path).video.duration_sec)
 
-        if len(cam_paths) < 3:
-            raise RuntimeError("Need CAM_L, CAM_C, and CAM_R before processing")
+        if len(cam_paths) < len(CAMERA_IDS):
+            raise RuntimeError(f"Need {', '.join(CAMERA_IDS)} before processing")
 
-        stitched = (media_root / f"{session_id}_stitched.mp4").resolve()
-        if not str(stitched).startswith(str(media_root)):
-            raise OffloadError("Invalid media output path")
+        stitched = _within(self.media_dir, f"{session_id}_stitched.mp4", what="media output")
         stitch_hstack(cam_paths, stitched)
 
         events = detect_demo_events(duration or 10.0)
-        events_path = media_root / f"{session_id}_events.json"
+        events_path = stitched.with_name(f"{session_id}_events.json")
         events_path.write_text(json.dumps(events, indent=2), encoding="utf-8")
 
         game = db.query(Game).filter_by(session_id=session_id).one_or_none()
@@ -179,10 +179,9 @@ class ProcessPipeline:
         }
 
     def health(self) -> dict:
-        free = shutil.disk_usage(self.sessions_dir).free / (1024**3)
         return {
             "status": "healthy",
-            "storage_free_gb": round(free, 2),
+            "storage_free_gb": round(free_gb(self.sessions_dir), 2),
             "active_uploads": 0,
             "sessions_dir": str(self.sessions_dir),
         }

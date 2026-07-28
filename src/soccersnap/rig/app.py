@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from soccersnap.config import settings
-from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
+from soccersnap.http_utils import validated_ids
 from soccersnap.protocol.schemas import (
     ConfirmRequest,
     CoordinatorStartRequest,
@@ -13,6 +15,7 @@ from soccersnap.protocol.schemas import (
 from soccersnap.rig.coordinator import FleetCoordinator
 from soccersnap.rig.framing import assess_framing
 from soccersnap.security import require_ops
+from soccersnap.timeutils import seconds_until
 
 
 def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
@@ -48,11 +51,7 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     @router.post("/coordinator/start", dependencies=[Depends(require_ops)])
     def coordinator_start(body: CoordinatorStartRequest | None = None):
         req = body or CoordinatorStartRequest()
-        try:
-            if req.session_id:
-                validate_session_id(req.session_id)
-        except InvalidIdError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        validated_ids(session_id=req.session_id or None)
         result = coord.start_all(req.session_id, delay_sec=req.delay_sec)
         if not result.get("success"):
             raise HTTPException(status_code=409, detail=result)
@@ -68,22 +67,12 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     @router.post("/record/start", dependencies=[Depends(require_ops)])
     def record_start(body: StartRecordingRequest | None = None):
         req = body or StartRecordingRequest()
-        try:
-            if req.session_id:
-                validate_session_id(req.session_id)
-        except InvalidIdError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        validated_ids(session_id=req.session_id or None)
         # Honor absolute scheduled_start when provided by coordinator broadcast.
         if req.scheduled_start is not None:
-            from datetime import datetime, timezone
-            import time as time_mod
-
-            target = req.scheduled_start
-            if target.tzinfo is None:
-                target = target.replace(tzinfo=timezone.utc)
-            wait = (target - datetime.now(timezone.utc)).total_seconds()
+            wait = seconds_until(req.scheduled_start)
             if wait > 0:
-                time_mod.sleep(wait)
+                time.sleep(wait)
             result = coord.start_all(req.session_id, delay_sec=0.0)
         else:
             result = coord.start_all(req.session_id, delay_sec=0.05)
@@ -121,21 +110,11 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     @router.get("/framing/{camera_id}")
     def framing(camera_id: str):
         result = assess_framing(camera_id, simulate=coord.fleet.simulate)
-        return {
-            "camera_id": camera_id,
-            "quality": result.quality.value,
-            "score": result.score,
-            "message": result.message,
-            "tone_hz": result.tone_hz,
-        }
+        return {"camera_id": camera_id, **result.as_dict()}
 
     @router.get("/recordings/{session_id}/{camera_id}/media", dependencies=[Depends(require_ops)])
     def recording_media(session_id: str, camera_id: str):
-        try:
-            session_id = validate_session_id(session_id)
-            camera_id = validate_camera_id(camera_id)
-        except InvalidIdError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        validated_ids(session_id, camera_id)
         path = settings.recordings_dir / f"{session_id}_{camera_id}.mp4"
         if not path.exists():
             raise HTTPException(status_code=404, detail="Media not found")
