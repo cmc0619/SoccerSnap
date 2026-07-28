@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SoccerSnap Watch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Soccer<span>Snap</span></a>
+    <nav>
+      <a href="/field/">Field</a>
+      <button id="logoutBtn" type="button" hidden>Sign out</button>
+    </nav>
+  </header>
+
+  <section id="gate" class="gate">
+    <p class="brand-mark">Soccer<span>Snap</span></p>
+    <h1>Watch the match film.</h1>
+    <p class="lead">Team code unlocks the season reel.</p>
+    <form id="loginForm">
+      <label>Team code <input name="team_code" value="SNAP26" required /></label>
+      <label>Username <input name="username" value="parent" required /></label>
+      <label>Password <input name="password" type="password" value="parent" required /></label>
+      <button type="submit">Enter</button>
+    </form>
+    <p class="hint" id="gateMsg"></p>
+  </section>
+
+  <main id="app" hidden>
+    <section class="games-pane">
+      <h2>Games</h2>
+      <ul id="gameList"></ul>
+    </section>
+    <section class="player-pane">
+      <div class="player-head">
+        <h2 id="gameTitle">Select a game</h2>
+        <form id="searchForm">
+          <input name="q" placeholder='Try “saves” or “goals by #9”' />
+          <button type="submit">Search</button>
+        </form>
+      </div>
+      <video id="player" controls playsinline></video>
+      <div class="chips" id="chips"></div>
+      <ul class="timeline" id="timeline"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

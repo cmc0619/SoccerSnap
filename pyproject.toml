@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soccersnap"
+version = "1.0.0"
+description = "Synchronized multi-camera soccer capture, processing, and watch portal"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Cliff Campbell" }]
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+  "sqlalchemy>=2.0.30",
+  "python-multipart>=0.0.9",
+  "httpx>=0.27.0",
+  "passlib[bcrypt]>=1.7.4",
+  "bcrypt>=4.0.0,<4.1.0",
+  "itsdangerous>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2.0", "pytest-asyncio>=0.23.0"]
+
+[project.scripts]
+soccersnap = "soccersnap.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+soccersnap = ["web/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SoccerSnap Field</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Soccer<span>Snap</span></a>
+    <span class="mode">Field Ops</span>
+  </header>
+
+  <main>
+    <section class="control">
+      <p class="eyebrow" id="sessionLabel">No active session</p>
+      <h1>Ready when the whistle is.</h1>
+      <p class="sub">CAM_C coordinates a scheduled start so L / C / R roll together.</p>
+      <div class="actions">
+        <button id="preflightBtn" class="ghost">Preflight</button>
+        <button id="recordBtn" class="record">Record</button>
+        <button id="processBtn" class="ghost" disabled>Process</button>
+      </div>
+      <p class="status-line" id="statusLine">Checking fleet…</p>
+    </section>
+
+    <section class="cams" id="camGrid" aria-label="Camera status"></section>
+
+    <section class="log" aria-live="polite">
+      <h2>Ops log</h2>
+      <ul id="logList"></ul>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

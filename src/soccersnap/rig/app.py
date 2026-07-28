@@ -1,0 +1,121 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.responses import FileResponse
+
+from soccersnap.config import settings
+from soccersnap.protocol.schemas import (
+    ConfirmRequest,
+    CoordinatorStartRequest,
+    StartRecordingRequest,
+)
+from soccersnap.rig.coordinator import FleetCoordinator
+from soccersnap.rig.framing import assess_framing
+
+
+def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
+    coord = coordinator or FleetCoordinator()
+    router = APIRouter(prefix="/api/v1", tags=["rig"])
+
+    @router.get("/health")
+    def health():
+        disk = coord.fleet.disk_status()
+        return {
+            "status": "healthy",
+            "storage_free_gb": disk.free_gb,
+            "active_uploads": 0,
+            "version": settings.software_version,
+        }
+
+    @router.get("/status")
+    def status():
+        return coord.aggregated_status()
+
+    @router.get("/coordinator/status")
+    def coordinator_status():
+        return coord.aggregated_status()
+
+    @router.get("/coordinator/peers")
+    def coordinator_peers():
+        return {"peers": coord.peers()}
+
+    @router.post("/coordinator/preflight")
+    def coordinator_preflight():
+        return coord.preflight()
+
+    @router.post("/coordinator/start")
+    def coordinator_start(body: CoordinatorStartRequest | None = None):
+        req = body or CoordinatorStartRequest()
+        # Demo uses a short delay so API tests stay snappy; UI can pass delay_sec=2.
+        result = coord.start_all(req.session_id, delay_sec=req.delay_sec)
+        if not result.get("success"):
+            raise HTTPException(status_code=409, detail=result)
+        return result
+
+    @router.post("/coordinator/stop")
+    def coordinator_stop(duration_sec: float | None = None):
+        try:
+            return coord.stop_all(duration_sec=duration_sec)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.post("/record/start")
+    def record_start(body: StartRecordingRequest | None = None):
+        req = body or StartRecordingRequest()
+        # Peer path: honor scheduled_start by waiting inside coordinator when delay given.
+        result = coord.start_all(req.session_id, delay_sec=0.0 if req.scheduled_start else 0.05)
+        if not result.get("success"):
+            raise HTTPException(status_code=409, detail=result)
+        return result
+
+    @router.post("/record/stop")
+    def record_stop():
+        try:
+            return coord.stop_all()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @router.get("/recordings")
+    def recordings():
+        return {"recordings": coord.fleet.recordings()}
+
+    @router.post("/recordings/confirm")
+    def recordings_confirm(body: ConfirmRequest):
+        try:
+            marked = coord.fleet.confirm(body)
+            return {"success": True, "manifest": marked.flat(), "offloaded": marked.offloaded}
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/recordings/cleanup")
+    def recordings_cleanup():
+        removed = coord.fleet.cleanup_offloaded()
+        return {"removed": removed}
+
+    @router.get("/framing/{camera_id}")
+    def framing(camera_id: str):
+        result = assess_framing(camera_id, simulate=coord.fleet.simulate)
+        return {
+            "camera_id": camera_id,
+            "quality": result.quality.value,
+            "score": result.score,
+            "message": result.message,
+            "tone_hz": result.tone_hz,
+        }
+
+    @router.get("/recordings/{session_id}/{camera_id}/media")
+    def recording_media(session_id: str, camera_id: str):
+        path = settings.recordings_dir / f"{session_id}_{camera_id}.mp4"
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Media not found")
+        return FileResponse(path, media_type="video/mp4", filename=path.name)
+
+    return router
+
+
+def create_rig_app(coordinator: FleetCoordinator | None = None) -> FastAPI:
+    app = FastAPI(title="SoccerSnap Rig", version=settings.software_version)
+    app.include_router(create_rig_router(coordinator))
+    return app
