@@ -130,13 +130,17 @@ def run_preflight(
 ) -> dict:
     reports = all_gates(base_dir, minimum_gb, simulate=simulate, offset_ms=0.0)
     peers = peer_offsets_ms or {"CAM_L": 0.8, "CAM_C": 0.0, "CAM_R": 1.2}
-    peer_reports = [sync_ok(offset, ) for offset in peers.values()]
-    all_reports = reports + [
-        GateReport(name=f"peer_sync_{cam}", ok=sync_ok(off).ok, reason=f"{cam}: {off:.2f}ms")
+    peer_reports = [
+        GateReport(
+            name=f"peer_sync_{cam}",
+            ok=(rep := sync_ok(off)).ok,
+            reason=rep.reason or f"{cam}: {off:.2f}ms",
+        )
         for cam, off in peers.items()
     ]
-    # Keep peer sync detail without duplicating raw sync_ok thrice in blocking set
-    blocking = [r for r in reports if not r.ok]
+    all_reports = reports + peer_reports
+    # Local gates and peer sync must all pass — misaligned peers block recording.
+    blocking = [r for r in all_reports if not r.ok]
     return {
         "ok": not blocking,
         "reports": [
@@ -145,5 +149,4 @@ def run_preflight(
         ],
         "blocking": [{"name": r.name, "reason": r.reason} for r in blocking],
         "peers_online": list(peers.keys()),
-        "_unused_peer_ok": all(r.ok for r in peer_reports),
     }

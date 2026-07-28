@@ -1,3 +1,1 @@
-from .app import create_portal_router
-
-__all__ = ["create_portal_router"]
+"""Portal package — import routers from soccersnap.portal.app to avoid cycles."""

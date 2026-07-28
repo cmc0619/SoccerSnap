@@ -30,6 +30,8 @@ Open [http://127.0.0.1:7420](http://127.0.0.1:7420)
 
 **Demo login:** team code `SNAP26` · `parent` / `parent` · `coach` / `coach`
 
+Ops (confirm/cleanup/upload/process) require header `X-SoccerSnap-Key` (see `/api/demo/info` in demo, or `SOCCERSNAP_OPS_API_KEY`). Watch routes use a signed server session cookie after login.
+
 ### Docker
 
 ```bash

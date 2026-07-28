@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 from soccersnap import __version__
 from soccersnap.config import settings
 from soccersnap.db import init_db, session_scope
 from soccersnap.demo.seed import seed_demo
+from soccersnap.models import Game
 from soccersnap.portal.app import create_portal_router
 from soccersnap.process.app import create_process_router
 from soccersnap.process.pipeline import ProcessPipeline
 from soccersnap.rig.app import create_rig_router
 from soccersnap.rig.coordinator import FleetCoordinator
+from soccersnap.security import PortalPrincipal, assert_game_access, require_ops, require_portal_user
 
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
@@ -38,6 +41,13 @@ def create_demo_app() -> FastAPI:
         version=__version__,
         description="Synchronized multi-camera soccer capture → process → watch",
     )
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=settings.secret_key,
+        same_site="lax",
+        https_only=False,
+        max_age=60 * 60 * 12,
+    )
     app.state.coordinator = coordinator
     app.state.pipeline = pipeline
     app.state.seed = seed_info
@@ -52,6 +62,8 @@ def create_demo_app() -> FastAPI:
             "product": "SoccerSnap",
             "version": __version__,
             "seed": seed_info,
+            # Field UI needs the ops key for confirm/cleanup/process; rotate in production.
+            "ops_api_key": settings.ops_api_key,
             "endpoints": {
                 "field": "/field/",
                 "watch": "/watch/",
@@ -59,7 +71,7 @@ def create_demo_app() -> FastAPI:
             },
         }
 
-    @app.post("/api/demo/run-match")
+    @app.post("/api/demo/run-match", dependencies=[Depends(require_ops)])
     def run_match(delay_sec: float = 0.05, duration_sec: float = 4.0, opponent: str = "Rivals"):
         """One-shot: scheduled start → stop → PROTOCOL ingest/process → ready game."""
         from soccersnap.db import SessionLocal
@@ -85,10 +97,28 @@ def create_demo_app() -> FastAPI:
     media_dir.mkdir(parents=True, exist_ok=True)
 
     @app.get("/media/{name}")
-    def media(name: str):
+    def media(
+        name: str,
+        request: Request,
+        principal: PortalPrincipal = Depends(require_portal_user),
+    ):
+        # Path traversal guard
+        if "/" in name or "\\" in name or name.startswith("."):
+            raise HTTPException(status_code=400, detail="Invalid media name")
         path = media_dir / name
         if not path.exists() or not path.is_file():
             raise HTTPException(status_code=404, detail="Not found")
+        from soccersnap.db import SessionLocal
+
+        assert SessionLocal is not None
+        db = SessionLocal()
+        try:
+            game = db.query(Game).filter(Game.video_path == f"/media/{name}").one_or_none()
+            if game is None:
+                raise HTTPException(status_code=404, detail="Media not linked to a game")
+            assert_game_access(principal, game)
+        finally:
+            db.close()
         return FileResponse(path, media_type="video/mp4" if name.endswith(".mp4") else "application/octet-stream")
 
     if (WEB_ROOT / "field").exists():

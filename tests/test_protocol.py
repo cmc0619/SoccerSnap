@@ -134,6 +134,17 @@ def test_preflight_simulate_ok(tmp_path: Path):
     assert result["ok"] is True
 
 
+def test_preflight_blocks_bad_peer_sync(tmp_path: Path):
+    result = run_preflight(
+        tmp_path,
+        minimum_gb=0.001,
+        simulate=True,
+        peer_offsets_ms={"CAM_L": 0.5, "CAM_C": 0.0, "CAM_R": 12.0},
+    )
+    assert result["ok"] is False
+    assert any(b["name"] == "peer_sync_CAM_R" for b in result["blocking"])
+
+
 def test_query_parser_and_search():
     parsed = parse_query("show me saves by #1 in the first half")
     assert "save" in parsed.event_types

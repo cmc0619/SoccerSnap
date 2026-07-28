@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import time
+import uuid
 from pathlib import Path
 from typing import Callable
 
@@ -35,12 +36,19 @@ def store_upload(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_media = dest_dir / "recording.mp4"
     dest_manifest = dest_dir / "manifest.json"
+    # Unique temp + atomic replace avoids concurrent upload clobbering.
+    tmp_media = dest_dir / f".recording.{uuid.uuid4().hex}.mp4"
+    server_checksum = ""
 
-    shutil.copy2(source_file, dest_media)
-    server_checksum = sha256_file(dest_media)
-    if server_checksum.lower() != checksum_hex.lower():
-        dest_media.unlink(missing_ok=True)
-        raise OffloadError("Post-copy checksum mismatch")
+    try:
+        shutil.copy2(source_file, tmp_media)
+        server_checksum = sha256_file(tmp_media)
+        if server_checksum.lower() != checksum_hex.lower():
+            raise OffloadError("Post-copy checksum mismatch")
+        tmp_media.replace(dest_media)
+    except Exception:
+        tmp_media.unlink(missing_ok=True)
+        raise
 
     if manifest is not None:
         dest_manifest.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")

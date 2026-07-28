@@ -8,6 +8,13 @@ const processBtn = document.getElementById("processBtn");
 
 let recording = false;
 let lastSessionId = null;
+let opsKey = localStorage.getItem("soccersnap_ops_key") || "";
+
+function opsHeaders(json = false) {
+  const headers = { "X-SoccerSnap-Key": opsKey };
+  if (json) headers["Content-Type"] = "application/json";
+  return headers;
+}
 
 function log(msg) {
   const li = document.createElement("li");
@@ -33,6 +40,14 @@ function renderCams(cameras = []) {
       `;
     })
     .join("");
+}
+
+async function ensureOpsKey() {
+  if (opsKey) return;
+  const res = await fetch("/api/demo/info");
+  const data = await res.json();
+  opsKey = data.ops_api_key || "";
+  localStorage.setItem("soccersnap_ops_key", opsKey);
 }
 
 async function refreshStatus() {
@@ -74,7 +89,6 @@ recordBtn.addEventListener("click", async () => {
   recordBtn.disabled = true;
   try {
     if (!recording) {
-      // Short delay for snappy demo UI; PROTOCOL semantics still present.
       const res = await fetch("/api/v1/coordinator/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -107,19 +121,22 @@ processBtn.addEventListener("click", async () => {
   processBtn.disabled = true;
   statusLine.textContent = "Offloading with checksum verify, stitching, tagging events…";
   try {
+    await ensureOpsKey();
     const res = await fetch("/api/v1/process/from-rig", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: opsHeaders(true),
       body: JSON.stringify({ session_id: lastSessionId, opponent: "Rivals" }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Process failed");
     log(`Ready: ${data.session_id} · ${data.events} events`);
     statusLine.textContent = `Game ready — open Watch. ${data.events} events tagged.`;
-    processBtn.insertAdjacentHTML(
-      "afterend",
-      ` <a class="ghost" style="display:inline-flex;align-items:center;padding:0.85rem 1.25rem;border-radius:999px;border:1px solid rgba(242,240,233,0.3);font-weight:700;" href="/watch/">Watch</a>`
-    );
+    if (!document.getElementById("watchLink")) {
+      processBtn.insertAdjacentHTML(
+        "afterend",
+        ` <a id="watchLink" class="ghost" style="display:inline-flex;align-items:center;padding:0.85rem 1.25rem;border-radius:999px;border:1px solid rgba(242,240,233,0.3);font-weight:700;" href="/watch/">Watch</a>`
+      );
+    }
   } catch (err) {
     log(`Process error: ${err.message}`);
     statusLine.textContent = err.message;
@@ -128,9 +145,11 @@ processBtn.addEventListener("click", async () => {
   }
 });
 
-refreshStatus().catch((err) => {
-  statusLine.textContent = `Cannot reach API: ${err.message}`;
-});
+ensureOpsKey()
+  .then(() => refreshStatus())
+  .catch((err) => {
+    statusLine.textContent = `Cannot reach API: ${err.message}`;
+  });
 setInterval(() => {
   refreshStatus().catch(() => {});
 }, 4000);

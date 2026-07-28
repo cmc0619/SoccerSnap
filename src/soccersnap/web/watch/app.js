@@ -34,51 +34,88 @@ function fmt(ms) {
   return `${m}:${String(r).padStart(2, "0")}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function renderTimeline(events) {
-  timeline.innerHTML = events
-    .map(
-      (e) => `
-      <li>
-        <button type="button" data-ms="${e.t_start_ms}">
-          <span class="t">${fmt(e.t_start_ms)}</span>
-          ${e.label || e.type}${e.jersey_number ? ` · #${e.jersey_number}` : ""}
-        </button>
-      </li>`
-    )
-    .join("");
-  timeline.querySelectorAll("button").forEach((btn) => {
+  timeline.innerHTML = "";
+  for (const e of events) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.ms = String(e.t_start_ms);
+    const t = document.createElement("span");
+    t.className = "t";
+    t.textContent = fmt(e.t_start_ms);
+    btn.appendChild(t);
+    btn.appendChild(
+      document.createTextNode(
+        ` ${e.label || e.type}${e.jersey_number ? ` · #${e.jersey_number}` : ""}`
+      )
+    );
     btn.addEventListener("click", () => {
       player.currentTime = Number(btn.dataset.ms) / 1000;
       player.play().catch(() => {});
     });
-  });
+    li.appendChild(btn);
+    timeline.appendChild(li);
+  }
 }
 
 function renderChips() {
-  chips.innerHTML = QUICK.map((q) => `<button type="button" data-q="${q}">${q}</button>`).join("");
-  chips.querySelectorAll("button").forEach((btn) => {
-    btn.addEventListener("click", () => runSearch(btn.dataset.q));
+  chips.innerHTML = "";
+  for (const q of QUICK) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = q;
+    btn.addEventListener("click", () => runSearch(q));
+    chips.appendChild(btn);
+  }
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    credentials: "include",
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+    },
   });
+  return res;
 }
 
 async function loadGames() {
-  const res = await fetch(`/api/portal/games?team_code=${encodeURIComponent(session.team_code)}`);
+  const res = await api(`/api/portal/games?team_code=${encodeURIComponent(session.team_code)}`);
+  if (res.status === 401) {
+    showGate();
+    return;
+  }
   const data = await res.json();
   const games = data.games || [];
-  gameList.innerHTML = games
-    .map(
-      (g) => `
-      <li>
-        <button type="button" data-id="${g.id}">
-          <span class="opp">vs ${g.opponent}</span>
-          <span class="meta">${g.status} · ${g.event_count} events</span>
-        </button>
-      </li>`
-    )
-    .join("");
-  gameList.querySelectorAll("button").forEach((btn) => {
+  gameList.innerHTML = "";
+  for (const g of games) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.dataset.id = String(g.id);
+    const opp = document.createElement("span");
+    opp.className = "opp";
+    opp.textContent = `vs ${g.opponent}`;
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    meta.textContent = `${g.status} · ${g.event_count} events`;
+    btn.appendChild(opp);
+    btn.appendChild(meta);
     btn.addEventListener("click", () => openGame(Number(btn.dataset.id), btn));
-  });
+    li.appendChild(btn);
+    gameList.appendChild(li);
+  }
   if (games.length) {
     const first = gameList.querySelector("button");
     openGame(games[0].id, first);
@@ -90,10 +127,12 @@ async function loadGames() {
 async function openGame(id, btn) {
   gameList.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
-  const res = await fetch(`/api/portal/games/${id}`);
+  const res = await api(`/api/portal/games/${id}`);
+  if (!res.ok) return;
   currentGame = await res.json();
   gameTitle.textContent = `vs ${currentGame.opponent}`;
   if (currentGame.video_path) {
+    // Same-origin cookie auth works for <video> when credentials were established.
     player.src = currentGame.video_path;
   } else {
     player.removeAttribute("src");
@@ -103,9 +142,10 @@ async function openGame(id, btn) {
 
 async function runSearch(q) {
   if (!currentGame) return;
-  const res = await fetch(
+  const res = await api(
     `/api/portal/search?q=${encodeURIComponent(q)}&game_id=${currentGame.id}`
   );
+  if (!res.ok) return;
   const data = await res.json();
   renderTimeline(data.results || []);
   gameTitle.textContent = `vs ${currentGame.opponent} · “${q}” (${(data.results || []).length})`;
@@ -116,7 +156,7 @@ loginForm.addEventListener("submit", async (ev) => {
   const fd = new FormData(loginForm);
   gateMsg.textContent = "Signing in…";
   try {
-    const res = await fetch("/api/portal/login", {
+    const res = await api("/api/portal/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -128,7 +168,7 @@ loginForm.addEventListener("submit", async (ev) => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "Login failed");
     session = data;
-    localStorage.setItem("soccersnap_session", JSON.stringify(session));
+    localStorage.setItem("soccersnap_watch_user", JSON.stringify(session));
     showApp();
     renderChips();
     await loadGames();
@@ -143,21 +183,30 @@ searchForm.addEventListener("submit", (ev) => {
   runSearch(String(q || ""));
 });
 
-logoutBtn.addEventListener("click", () => {
-  localStorage.removeItem("soccersnap_session");
+logoutBtn.addEventListener("click", async () => {
+  await api("/api/portal/logout", { method: "POST" });
+  localStorage.removeItem("soccersnap_watch_user");
   session = null;
   showGate();
 });
 
 (async function boot() {
   renderChips();
-  const raw = localStorage.getItem("soccersnap_session");
-  if (!raw) return;
-  try {
-    session = JSON.parse(raw);
+  // Prefer server session; fall back to probing /me
+  const me = await api("/api/portal/me");
+  if (me.ok) {
+    session = await me.json();
+    localStorage.setItem("soccersnap_watch_user", JSON.stringify(session));
     showApp();
     await loadGames();
-  } catch {
-    localStorage.removeItem("soccersnap_session");
+    return;
+  }
+  const raw = localStorage.getItem("soccersnap_watch_user");
+  if (raw) {
+    // Stale client cache without cookie — force re-login
+    localStorage.removeItem("soccersnap_watch_user");
   }
 })();
+
+// silence unused helper when not used for innerHTML paths
+void escapeHtml;

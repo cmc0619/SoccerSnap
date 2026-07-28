@@ -13,12 +13,14 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 7420
     secret_key: str = "soccersnap-dev-secret"
+    ops_api_key: str = "soccersnap-ops"
     demo_team_code: str = "SNAP26"
     admin_user: str = "admin"
     admin_password: str = "soccersnap"
     software_version: str = "1.0.0"
     min_free_gb: float = 1.0
     simulate_hardware: bool = True
+    max_upload_bytes: int = 2_147_483_648  # 2 GiB
 
     @property
     def recordings_dir(self) -> Path:

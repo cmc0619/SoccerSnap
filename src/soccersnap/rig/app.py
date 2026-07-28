@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from soccersnap.config import settings
@@ -11,6 +11,7 @@ from soccersnap.protocol.schemas import (
 )
 from soccersnap.rig.coordinator import FleetCoordinator
 from soccersnap.rig.framing import assess_framing
+from soccersnap.security import require_ops
 
 
 def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
@@ -46,7 +47,6 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     @router.post("/coordinator/start")
     def coordinator_start(body: CoordinatorStartRequest | None = None):
         req = body or CoordinatorStartRequest()
-        # Demo uses a short delay so API tests stay snappy; UI can pass delay_sec=2.
         result = coord.start_all(req.session_id, delay_sec=req.delay_sec)
         if not result.get("success"):
             raise HTTPException(status_code=409, detail=result)
@@ -62,8 +62,20 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     @router.post("/record/start")
     def record_start(body: StartRecordingRequest | None = None):
         req = body or StartRecordingRequest()
-        # Peer path: honor scheduled_start by waiting inside coordinator when delay given.
-        result = coord.start_all(req.session_id, delay_sec=0.0 if req.scheduled_start else 0.05)
+        # Honor absolute scheduled_start when provided by coordinator broadcast.
+        if req.scheduled_start is not None:
+            from datetime import datetime, timezone
+            import time as time_mod
+
+            target = req.scheduled_start
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            wait = (target - datetime.now(timezone.utc)).total_seconds()
+            if wait > 0:
+                time_mod.sleep(wait)
+            result = coord.start_all(req.session_id, delay_sec=0.0)
+        else:
+            result = coord.start_all(req.session_id, delay_sec=0.05)
         if not result.get("success"):
             raise HTTPException(status_code=409, detail=result)
         return result
@@ -75,11 +87,12 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @router.get("/recordings")
+    @router.get("/recordings", dependencies=[Depends(require_ops)])
     def recordings():
+        # Checksums enable confirm/delete — ops auth required.
         return {"recordings": coord.fleet.recordings()}
 
-    @router.post("/recordings/confirm")
+    @router.post("/recordings/confirm", dependencies=[Depends(require_ops)])
     def recordings_confirm(body: ConfirmRequest):
         try:
             marked = coord.fleet.confirm(body)
@@ -89,7 +102,7 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    @router.post("/recordings/cleanup")
+    @router.post("/recordings/cleanup", dependencies=[Depends(require_ops)])
     def recordings_cleanup():
         removed = coord.fleet.cleanup_offloaded()
         return {"removed": removed}
@@ -105,7 +118,7 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
             "tone_hz": result.tone_hz,
         }
 
-    @router.get("/recordings/{session_id}/{camera_id}/media")
+    @router.get("/recordings/{session_id}/{camera_id}/media", dependencies=[Depends(require_ops)])
     def recording_media(session_id: str, camera_id: str):
         path = settings.recordings_dir / f"{session_id}_{camera_id}.mp4"
         if not path.exists():
