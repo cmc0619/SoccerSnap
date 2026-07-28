@@ -45,3 +45,12 @@ CAM_C coordinator broadcasts `scheduled_start` (ISO-8601). Peers wait until that
 ## Retry backoff
 
 Attempts at 0s, 5s, 10s, 20s, 40s (max 5).
+
+## Auth
+
+Upload, confirm, cleanup, process, and recording listings that expose checksums require ops auth:
+
+- Header `X-SoccerSnap-Key: <SOCCERSNAP_OPS_API_KEY>`, or
+- HTTP Basic with admin credentials
+
+Portal watch APIs require a signed server session cookie established via `POST /api/portal/login`.

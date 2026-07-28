@@ -6,6 +6,8 @@ services:
     environment:
       SOCCERSNAP_DATA_DIR: /data
       SOCCERSNAP_DATABASE_URL: sqlite:////data/soccersnap.db
+      SOCCERSNAP_SECRET_KEY: change-me-in-production
+      SOCCERSNAP_OPS_API_KEY: change-me-ops-key
       SOCCERSNAP_DEMO_TEAM_CODE: SNAP26
       SOCCERSNAP_ADMIN_USER: admin
       SOCCERSNAP_ADMIN_PASSWORD: soccersnap
