@@ -20,8 +20,11 @@ from soccersnap.rig.app import create_rig_router
 from soccersnap.rig.coordinator import FleetCoordinator
 from soccersnap.security import (
     PortalPrincipal,
+    admin_credentials_valid,
     assert_game_access,
     basic_security,
+    client_key,
+    enforce_rate_limit,
     require_ops,
     require_portal_user,
 )
@@ -31,7 +34,10 @@ WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 
 
 def create_demo_app() -> FastAPI:
+    generated = settings.ensure_demo_secrets()
     settings.validate_runtime_secrets()
+    for name, value in generated.items():
+        print(f"[soccersnap demo] {name}={value}")
     settings.ensure_dirs()
     init_db()
     with session_scope() as db:
@@ -48,12 +54,15 @@ def create_demo_app() -> FastAPI:
         title="SoccerSnap",
         version=__version__,
         description="Synchronized multi-camera soccer capture → process → watch",
+        docs_url="/docs" if settings.demo_mode else None,
+        redoc_url="/redoc" if settings.demo_mode else None,
+        openapi_url="/openapi.json" if settings.demo_mode else None,
     )
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.secret_key,
         same_site="lax",
-        https_only=False,
+        https_only=not settings.demo_mode,
         max_age=60 * 60 * 12,
     )
     app.state.coordinator = coordinator
@@ -64,7 +73,12 @@ def create_demo_app() -> FastAPI:
     app.include_router(create_process_router(pipeline, coordinator))
     app.include_router(create_portal_router())
 
-    @app.get("/api/demo/info")
+    def require_demo_mode() -> None:
+        """Demo/debug surface is unavailable in non-demo deployments."""
+        if not settings.demo_mode:
+            raise HTTPException(status_code=404, detail="Not found")
+
+    @app.get("/api/demo/info", dependencies=[Depends(require_demo_mode)])
     def demo_info():
         return {
             "product": "SoccerSnap",
@@ -77,15 +91,14 @@ def create_demo_app() -> FastAPI:
             },
         }
 
-    @app.post("/api/demo/field-unlock")
+    @app.post("/api/demo/field-unlock", dependencies=[Depends(require_demo_mode)])
     def field_unlock(
+        request: Request,
         credentials: HTTPBasicCredentials | None = Depends(basic_security),
     ):
         """Return ops key only after admin basic auth — never expose it publicly."""
-        if credentials is None or not (
-            credentials.username == settings.admin_user
-            and credentials.password == settings.admin_password
-        ):
+        enforce_rate_limit(client_key(request, "field-unlock"), limit=10, window_sec=300.0)
+        if not admin_credentials_valid(credentials):
             raise HTTPException(
                 status_code=401,
                 detail="Admin credentials required",
@@ -93,7 +106,10 @@ def create_demo_app() -> FastAPI:
             )
         return {"ops_api_key": settings.ops_api_key}
 
-    @app.post("/api/demo/run-match", dependencies=[Depends(require_ops)])
+    @app.post(
+        "/api/demo/run-match",
+        dependencies=[Depends(require_demo_mode), Depends(require_ops)],
+    )
     def run_match(delay_sec: float = 0.05, duration_sec: float = 4.0, opponent: str = "Rivals"):
         """One-shot: scheduled start → stop → PROTOCOL ingest/process → ready game."""
         from soccersnap.db import SessionLocal

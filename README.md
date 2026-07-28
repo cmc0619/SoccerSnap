@@ -16,9 +16,13 @@ SoccerSnap consolidates the best ideas from three Traloxolcus prototypes into on
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-# Local demo uses SOCCERSNAP_DEMO_MODE=true defaults (override secrets for anything exposed).
-soccersnap demo
+# Demo mode is opt-in: it generates any unset secret at startup and prints it,
+# and seeds the coach/parent test logins. Never enable it on an exposed host.
+SOCCERSNAP_DEMO_MODE=true soccersnap demo
 ```
+
+Outside demo mode the app refuses to start until `SOCCERSNAP_SECRET_KEY`,
+`SOCCERSNAP_OPS_API_KEY`, and `SOCCERSNAP_ADMIN_PASSWORD` are set to unique values.
 
 Open [http://127.0.0.1:7420](http://127.0.0.1:7420)
 
@@ -27,11 +31,11 @@ Open [http://127.0.0.1:7420](http://127.0.0.1:7420)
 | Landing | `/` | Brand entry |
 | Field Ops | `/field/` | Preflight, scheduled Record, Process |
 | Watch | `/watch/` | Team login, timeline, NL search |
-| API docs | `/docs` | OpenAPI |
+| API docs | `/docs` | OpenAPI (demo mode only) |
 
-**Demo login:** team code `SNAP26` · `parent` / `parent` · `coach` / `coach`
+**Demo login (demo mode only):** team code `SNAP26` · `parent` / `parent` · `coach` / `coach`
 
-Ops (confirm/cleanup/upload/process) require header `X-SoccerSnap-Key` (see `/api/demo/info` in demo, or `SOCCERSNAP_OPS_API_KEY`). Watch routes use a signed server session cookie after login.
+Ops routes (status, preflight, record, confirm/cleanup/upload/process) require header `X-SoccerSnap-Key` or admin basic auth; the key comes from `SOCCERSNAP_OPS_API_KEY` (in demo mode it is printed at startup and obtainable from `/api/demo/field-unlock` with admin credentials). Watch routes use a signed server session cookie after login. `/api/demo/*` endpoints are served only in demo mode.
 
 ### Docker
 
@@ -55,7 +59,8 @@ docker compose up --build
 One-shot API:
 
 ```bash
-curl -X POST 'http://127.0.0.1:7420/api/demo/run-match?duration_sec=4'
+curl -X POST -H "X-SoccerSnap-Key: $SOCCERSNAP_OPS_API_KEY" \
+  'http://127.0.0.1:7420/api/demo/run-match?duration_sec=4'
 ```
 
 ## Protocol highlights

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import time
+from collections import defaultdict, deque
 from dataclasses import dataclass
+from hmac import compare_digest
+from threading import Lock
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -17,8 +21,49 @@ from soccersnap.portal.auth import verify_password
 basic_security = HTTPBasic(auto_error=False)
 
 
+def _secret_matches(provided: str | None, configured: str) -> bool:
+    """Constant-time compare that never authenticates against an unset secret."""
+    if not provided or not configured:
+        return False
+    return compare_digest(provided, configured)
+
+
 def _ops_key_valid(provided: str | None) -> bool:
-    return bool(provided) and provided == settings.ops_api_key
+    return _secret_matches(provided, settings.ops_api_key)
+
+
+_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+_ATTEMPTS_GUARD = Lock()
+
+
+def enforce_rate_limit(key: str, *, limit: int = 10, window_sec: float = 60.0) -> None:
+    """Throttle credential-guessing against login/unlock endpoints."""
+    now = time.monotonic()
+    with _ATTEMPTS_GUARD:
+        hits = _ATTEMPTS[key]
+        while hits and now - hits[0] > window_sec:
+            hits.popleft()
+        if len(hits) >= limit:
+            retry_after = int(window_sec - (now - hits[0])) + 1
+            raise HTTPException(
+                status_code=429,
+                detail="Too many attempts — try again later",
+                headers={"Retry-After": str(retry_after)},
+            )
+        hits.append(now)
+
+
+def client_key(request: Request, suffix: str = "") -> str:
+    host = request.client.host if request.client else "unknown"
+    return f"{host}:{suffix}"
+
+
+def admin_credentials_valid(credentials: HTTPBasicCredentials | None) -> bool:
+    if credentials is None:
+        return False
+    user_ok = _secret_matches(credentials.username, settings.admin_user)
+    password_ok = _secret_matches(credentials.password, settings.admin_password)
+    return user_ok and password_ok
 
 
 def require_ops(
@@ -28,14 +73,10 @@ def require_ops(
     """Protect destructive/offload endpoints (confirm, cleanup, upload, process)."""
     if _ops_key_valid(x_soccersnap_key):
         return
-    if credentials is not None:
-        if (
-            credentials.username == settings.admin_user
-            and credentials.password == settings.admin_password
-        ):
-            return
-        if credentials.password == settings.ops_api_key:
-            return
+    if admin_credentials_valid(credentials):
+        return
+    if credentials is not None and _ops_key_valid(credentials.password):
+        return
     raise HTTPException(
         status_code=401,
         detail="Ops authentication required",

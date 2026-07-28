@@ -8,7 +8,7 @@ const processBtn = document.getElementById("processBtn");
 
 let recording = false;
 let lastSessionId = null;
-let opsKey = localStorage.getItem("soccersnap_ops_key") || "";
+let opsKey = sessionStorage.getItem("soccersnap_ops_key") || "";
 
 function opsHeaders(json = false) {
   const headers = { "X-SoccerSnap-Key": opsKey };
@@ -24,41 +24,53 @@ function log(msg) {
 }
 
 function renderCams(cameras = []) {
-  camGrid.innerHTML = cameras
-    .map((cam) => {
+  camGrid.replaceChildren(
+    ...cameras.map((cam) => {
       const q = cam.framing?.quality || "good";
-      return `
-        <article class="cam">
-          <h3>${cam.camera_id}</h3>
-          <div class="meta">
-            Sync ${Number(cam.offset_ms).toFixed(2)} ms<br />
-            Batt ${cam.battery_percent}% · ${cam.temperature_c}°C<br />
-            ${cam.recording ? "RECORDING" : "Idle"}
-          </div>
-          <span class="badge ${q}">${q.replace("_", " ")}</span>
-        </article>
-      `;
+      const article = document.createElement("article");
+      article.className = "cam";
+      const title = document.createElement("h3");
+      title.textContent = cam.camera_id;
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = [
+        `Sync ${Number(cam.offset_ms).toFixed(2)} ms`,
+        `Batt ${cam.battery_percent}% · ${cam.temperature_c}°C`,
+        cam.recording ? "RECORDING" : "Idle",
+      ].join(" · ");
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.classList.add(String(q).replace(/[^a-z_]/gi, ""));
+      badge.textContent = String(q).replace("_", " ");
+      article.append(title, meta, badge);
+      return article;
     })
-    .join("");
+  );
 }
 
 async function ensureOpsKey() {
   if (opsKey) return;
-  // Ops key is never public — unlock with admin basic auth (demo defaults).
+  // Ops key is never public — unlock with the operator's own admin credentials.
+  const user = window.prompt("Admin user", "admin");
+  if (user === null) throw new Error("Field unlock cancelled");
+  const password = window.prompt("Admin password");
+  if (password === null) throw new Error("Field unlock cancelled");
   const res = await fetch("/api/demo/field-unlock", {
     method: "POST",
     headers: {
-      Authorization: "Basic " + btoa("admin:soccersnap"),
+      Authorization: "Basic " + btoa(`${user}:${password}`),
     },
   });
   if (!res.ok) throw new Error("Field unlock failed — check admin credentials");
   const data = await res.json();
   opsKey = data.ops_api_key || "";
-  localStorage.setItem("soccersnap_ops_key", opsKey);
+  sessionStorage.setItem("soccersnap_ops_key", opsKey);
 }
 
 async function refreshStatus() {
-  const res = await fetch("/api/v1/coordinator/status");
+  if (!opsKey) throw new Error("Ops key required — unlock Field Ops first");
+  const res = await fetch("/api/v1/coordinator/status", { headers: opsHeaders() });
+  if (!res.ok) throw new Error("Status unavailable — re-authenticate");
   const data = await res.json();
   recording = !!data.recording;
   lastSessionId = data.session_id || lastSessionId;
@@ -75,7 +87,11 @@ async function refreshStatus() {
 preflightBtn.addEventListener("click", async () => {
   preflightBtn.disabled = true;
   try {
-    const res = await fetch("/api/v1/coordinator/preflight", { method: "POST" });
+    await ensureOpsKey();
+    const res = await fetch("/api/v1/coordinator/preflight", {
+      method: "POST",
+      headers: opsHeaders(),
+    });
     const data = await res.json();
     renderCams(data.status?.cameras || []);
     if (data.ok) {
@@ -162,5 +178,6 @@ ensureOpsKey()
     statusLine.textContent = `Cannot reach API: ${err.message}`;
   });
 setInterval(() => {
+  if (!opsKey) return;
   refreshStatus().catch(() => {});
 }, 4000);

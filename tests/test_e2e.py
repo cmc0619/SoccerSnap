@@ -11,11 +11,15 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("SOCCERSNAP_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("SOCCERSNAP_DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("SOCCERSNAP_OPS_API_KEY", "test-ops-key")
+    monkeypatch.setenv("SOCCERSNAP_ADMIN_PASSWORD", "test-admin-password")
+    monkeypatch.setenv("SOCCERSNAP_DEMO_MODE", "true")
     from soccersnap.config import settings
 
     settings.data_dir = tmp_path / "data"
     settings.database_url = f"sqlite:///{tmp_path / 'test.db'}"
     settings.ops_api_key = "test-ops-key"
+    settings.admin_password = "test-admin-password"
+    settings.demo_mode = True
     settings.ensure_dirs()
 
     from soccersnap import db as dbmod
@@ -54,7 +58,7 @@ def test_demo_info_and_login(client: TestClient):
     assert client.post("/api/demo/field-unlock").status_code == 401
     unlocked = client.post(
         "/api/demo/field-unlock",
-        auth=("admin", "soccersnap"),
+        auth=("admin", "test-admin-password"),
     )
     assert unlocked.status_code == 200
     assert unlocked.json()["ops_api_key"] == "test-ops-key"
@@ -73,6 +77,29 @@ def test_destructive_rig_requires_ops_auth(client: TestClient):
     assert bare.status_code == 401
     ok = client.get("/api/v1/recordings", headers=ops_headers())
     assert ok.status_code == 200
+
+
+def test_fleet_telemetry_requires_ops_auth(client: TestClient):
+    for path in ("/api/v1/status", "/api/v1/coordinator/status", "/api/v1/coordinator/peers"):
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=ops_headers()).status_code == 200
+    assert client.post("/api/v1/coordinator/preflight").status_code == 401
+    assert client.post("/api/v1/coordinator/preflight", headers=ops_headers()).status_code == 200
+
+
+def test_confirm_rejects_traversal_ids(client: TestClient):
+    res = client.post(
+        "/api/v1/recordings/confirm",
+        headers=ops_headers(),
+        json={
+            "session_id": "../../etc",
+            "camera_id": "CAM_L",
+            "file": "passwd",
+            "checksum": {"algo": "sha256", "value": "0" * 64},
+        },
+    )
+    assert res.status_code == 400
+    assert "session_id" in res.json()["detail"]
 
 
 def test_full_match_pipeline(client: TestClient):

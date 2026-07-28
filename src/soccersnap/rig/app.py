@@ -29,19 +29,19 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
             "version": settings.software_version,
         }
 
-    @router.get("/status")
+    @router.get("/status", dependencies=[Depends(require_ops)])
     def status():
         return coord.aggregated_status()
 
-    @router.get("/coordinator/status")
+    @router.get("/coordinator/status", dependencies=[Depends(require_ops)])
     def coordinator_status():
         return coord.aggregated_status()
 
-    @router.get("/coordinator/peers")
+    @router.get("/coordinator/peers", dependencies=[Depends(require_ops)])
     def coordinator_peers():
         return {"peers": coord.peers()}
 
-    @router.post("/coordinator/preflight")
+    @router.post("/coordinator/preflight", dependencies=[Depends(require_ops)])
     def coordinator_preflight():
         return coord.preflight()
 
@@ -118,8 +118,12 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
         removed = coord.fleet.cleanup_offloaded()
         return {"removed": removed}
 
-    @router.get("/framing/{camera_id}")
+    @router.get("/framing/{camera_id}", dependencies=[Depends(require_ops)])
     def framing(camera_id: str):
+        try:
+            camera_id = validate_camera_id(camera_id)
+        except InvalidIdError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         result = assess_framing(camera_id, simulate=coord.fleet.simulate)
         return {
             "camera_id": camera_id,
