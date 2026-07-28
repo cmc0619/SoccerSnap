@@ -90,12 +90,22 @@ async function api(path, options = {}) {
   return res;
 }
 
-async function loadGames() {
-  const res = await api(`/api/portal/games?team_code=${encodeURIComponent(session.team_code)}`);
+function bounceIfUnauthorized(res) {
   if (res.status === 401) {
     showGate();
-    return;
+    return true;
   }
+  return false;
+}
+
+async function loadGames() {
+  // Omit team_code when absent — encodeURIComponent(null) becomes "null" and
+  // the backend looks up a non-existent team, returning an empty list.
+  const qs = session.team_code
+    ? `?team_code=${encodeURIComponent(session.team_code)}`
+    : "";
+  const res = await api(`/api/portal/games${qs}`);
+  if (bounceIfUnauthorized(res)) return;
   const data = await res.json();
   const games = data.games || [];
   gameList.innerHTML = "";
@@ -128,6 +138,7 @@ async function openGame(id, btn) {
   gameList.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
   const res = await api(`/api/portal/games/${id}`);
+  if (bounceIfUnauthorized(res)) return;
   if (!res.ok) return;
   currentGame = await res.json();
   gameTitle.textContent = `vs ${currentGame.opponent}`;
@@ -145,6 +156,7 @@ async function runSearch(q) {
   const res = await api(
     `/api/portal/search?q=${encodeURIComponent(q)}&game_id=${currentGame.id}`
   );
+  if (bounceIfUnauthorized(res)) return;
   if (!res.ok) return;
   const data = await res.json();
   renderTimeline(data.results || []);

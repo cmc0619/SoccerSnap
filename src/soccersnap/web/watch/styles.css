@@ -7,8 +7,6 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
-/* Author display rules must not defeat the hidden attribute. */
-[hidden] { display: none !important; }
 body {
   min-height: 100vh;
   font-family: "Figtree", sans-serif;
@@ -44,7 +42,8 @@ nav { display: flex; gap: 1rem; align-items: center; opacity: 0.85; }
   text-decoration: underline;
 }
 
-.gate {
+/* Hidden-aware: author display must not defeat the HTML hidden attribute. */
+.gate:not([hidden]) {
   min-height: calc(100vh - 4rem);
   display: grid;
   align-content: center;
@@ -83,7 +82,7 @@ button[type="submit"] {
 }
 .hint { margin-top: 0.8rem; min-height: 1.2em; opacity: 0.8; }
 
-#app {
+#app:not([hidden]) {
   display: grid;
   grid-template-columns: minmax(220px, 280px) 1fr;
   gap: 1rem;
@@ -92,7 +91,7 @@ button[type="submit"] {
   margin: 0 auto;
 }
 @media (max-width: 860px) {
-  #app { grid-template-columns: 1fr; }
+  #app:not([hidden]) { grid-template-columns: 1fr; }
 }
 .games-pane h2, .player-head h2 {
   font-size: 0.78rem;

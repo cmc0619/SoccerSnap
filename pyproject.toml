@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.2.0", "pytest-asyncio>=0.23.0"]
+dev = ["pytest>=8.2.0", "pytest-asyncio>=0.23.0", "playwright>=1.40.0"]
 
 [project.scripts]
 soccersnap = "soccersnap.__main__:main"
