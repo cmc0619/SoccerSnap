@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 from soccersnap.config import settings
 from soccersnap.db import get_session
+from soccersnap.media import FFmpegError
 from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
 from soccersnap.protocol.manifests import SessionManifest
 from soccersnap.protocol.offload import OffloadError, confirm_upload, store_upload
@@ -16,6 +18,8 @@ from soccersnap.protocol.schemas import UploadConfirmRequest
 from soccersnap.process.pipeline import ProcessPipeline
 from soccersnap.rig.coordinator import FleetCoordinator
 from soccersnap.security import require_ops
+
+logger = logging.getLogger(__name__)
 
 
 class ProcessRequest(BaseModel):
@@ -99,6 +103,8 @@ def create_process_router(
                 manifest=parsed,
             )
             return result
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid manifest: {exc}") from exc
         except OffloadError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
@@ -108,8 +114,8 @@ def create_process_router(
             if parent.exists() and parent.name == upload_id:
                 try:
                     parent.rmdir()
-                except OSError:
-                    pass
+                except OSError as exc:
+                    logger.warning("Could not remove upload staging dir %s: %s", parent, exc)
 
     @router.post("/upload/confirm", dependencies=[Depends(require_ops)])
     def upload_confirm(body: UploadConfirmRequest):
@@ -129,6 +135,11 @@ def create_process_router(
         assert session_id
         try:
             return pipe.process_session(session_id, db=db, opponent=body.opponent)
+        except FFmpegError as exc:
+            # Must precede FileNotFoundError handling: a missing ffmpeg binary is a
+            # server fault, not a missing session.
+            logger.error("Processing %s failed during stitch: %s", session_id, exc)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except OffloadError as exc:

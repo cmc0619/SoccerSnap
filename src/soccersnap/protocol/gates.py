@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 TEMP_LIMIT_C = 85.0
 BATTERY_CRITICAL = 10
@@ -35,6 +38,7 @@ def storage_writable(path: Path) -> GateReport:
         probe.unlink(missing_ok=True)
         return GateReport(name="storage", ok=True)
     except OSError as exc:
+        logger.warning("Storage gate failed for %s: %s", path, exc)
         return GateReport(name="storage", ok=False, reason=f"Storage not writable: {exc}")
 
 
@@ -43,6 +47,7 @@ def free_space_ok(path: Path, minimum_gb: float) -> GateReport:
         path.mkdir(parents=True, exist_ok=True)
         free_gb = shutil.disk_usage(path).free / (1024**3)
     except OSError as exc:
+        logger.warning("Disk gate failed for %s: %s", path, exc)
         return GateReport(name="disk", ok=False, reason=f"Disk inspection failed: {exc}")
     if free_gb >= minimum_gb:
         return GateReport(name="disk", ok=True, reason=f"{free_gb:.1f}GB free")
@@ -70,8 +75,9 @@ def temperature_safe(
         return GateReport(name="temperature", ok=True, reason="Temperature sensor unavailable")
     try:
         temp_c = float(thermal_path.read_text().strip()) / 1000.0
-    except (OSError, ValueError):
-        return GateReport(name="temperature", ok=False, reason="Temperature read failed")
+    except (OSError, ValueError) as exc:
+        logger.warning("Temperature read failed at %s: %s", thermal_path, exc)
+        return GateReport(name="temperature", ok=False, reason=f"Temperature read failed: {exc}")
     if temp_c < TEMP_LIMIT_C:
         return GateReport(name="temperature", ok=True, reason=f"{temp_c:.1f}C")
     return GateReport(name="temperature", ok=False, reason=f"Overheating: {temp_c:.1f}C >= {TEMP_LIMIT_C}C")
@@ -94,8 +100,9 @@ def battery_safe(
         return GateReport(name="battery", ok=True, reason="Battery sensor unavailable")
     try:
         percent = int(capacity_path.read_text().strip())
-    except (OSError, ValueError):
-        return GateReport(name="battery", ok=False, reason="Battery read failed")
+    except (OSError, ValueError) as exc:
+        logger.warning("Battery read failed at %s: %s", capacity_path, exc)
+        return GateReport(name="battery", ok=False, reason=f"Battery read failed: {exc}")
     if percent > BATTERY_CRITICAL:
         return GateReport(name="battery", ok=True, reason=f"{percent}%")
     return GateReport(name="battery", ok=False, reason=f"Battery critically low: {percent}%")

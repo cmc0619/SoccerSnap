@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import logging
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
 from soccersnap.config import settings
+from soccersnap.media import FFmpegError, run_ffmpeg
 from soccersnap.protocol.checksum import verify_checksum
 from soccersnap.protocol.manifests import (
     CameraId,
@@ -19,6 +20,12 @@ from soccersnap.protocol.manifests import (
 )
 from soccersnap.protocol.schemas import ConfirmRequest, DiskStatus, SyncStatus
 from soccersnap.rig.framing import assess_framing
+
+logger = logging.getLogger(__name__)
+
+
+class RecorderError(Exception):
+    """One or more cameras failed to produce a recording."""
 
 
 @dataclass
@@ -130,7 +137,7 @@ class RecorderFleet:
             "-shortest",
             str(path),
         ]
-        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+        run_ffmpeg(cmd, timeout=120, context=f"Write clip for {label}")
 
     def start(self, session_id: str, scheduled_start: datetime | None = None) -> dict:
         if any(n.recording for n in self.nodes.values()):
@@ -146,27 +153,39 @@ class RecorderFleet:
         if not any(n.recording for n in self.nodes.values()):
             raise RuntimeError("Not recording")
         manifests: list[SessionManifest] = []
+        failures: list[str] = []
         for node in self.nodes.values():
             elapsed = time.time() - (node.started_at or time.time())
             dur = float(duration_sec) if duration_sec is not None else max(3.0, min(elapsed, 12.0))
             media = self._media_path(node.session_id or "session", node.camera_id.value)
             framing = assess_framing(node.camera_id.value, simulate=self.simulate)
-            self._write_simulated_clip(media, dur, node.camera_id.value)
-            manifest = create_manifest(
-                session_id=node.session_id or "session",
-                camera_id=node.camera_id,
-                media_path=media,
-                offset_ms=node.offset_ms,
-                duration_sec=dur,
-                software_version=self.software_version,
-                framing_quality=framing.quality.value,
-                scheduled_start=node.scheduled_start,
-                temperature_c=node.temperature_c,
+            try:
+                self._write_simulated_clip(media, dur, node.camera_id.value)
+                manifest = create_manifest(
+                    session_id=node.session_id or "session",
+                    camera_id=node.camera_id,
+                    media_path=media,
+                    offset_ms=node.offset_ms,
+                    duration_sec=dur,
+                    software_version=self.software_version,
+                    framing_quality=framing.quality.value,
+                    scheduled_start=node.scheduled_start,
+                    temperature_c=node.temperature_c,
+                )
+                manifest.write(self.base_dir)
+                manifests.append(manifest)
+            except (FFmpegError, OSError) as exc:
+                logger.exception("Stop failed for %s", node.camera_id.value)
+                failures.append(f"{node.camera_id.value}: {exc}")
+            finally:
+                # Never leave the fleet wedged in "recording" after a failed stop.
+                node.recording = False
+                node.started_at = None
+        if failures:
+            raise RecorderError(
+                f"{len(failures)} of {len(self.nodes)} cameras failed to stop: "
+                + "; ".join(failures)
             )
-            manifest.write(self.base_dir)
-            manifests.append(manifest)
-            node.recording = False
-            node.started_at = None
         return manifests
 
     def recordings(self) -> list[dict]:
@@ -206,20 +225,26 @@ class RecorderFleet:
             raise FileNotFoundError("Manifest not found after confirm")
         return marked
 
-    def cleanup_offloaded(self) -> list[str]:
+    def cleanup_offloaded(self) -> dict[str, list[str]]:
+        """Delete offloaded media/manifests, reporting per-file failures."""
         removed: list[str] = []
+        failed: list[str] = []
         for manifest in list_manifests(self.base_dir):
             if not manifest.offloaded:
                 continue
             media = self.base_dir / manifest.file_name
             json_path = manifest.path_for(self.base_dir)
-            if media.exists():
-                media.unlink()
-                removed.append(str(media))
-            if json_path.exists():
-                json_path.unlink()
-                removed.append(str(json_path))
-        return removed
+            for path in (media, json_path):
+                if not path.exists():
+                    continue
+                try:
+                    path.unlink()
+                except OSError as exc:
+                    logger.error("Cleanup could not delete %s: %s", path, exc)
+                    failed.append(f"{path}: {exc}")
+                else:
+                    removed.append(str(path))
+        return {"removed": removed, "failed": failed}
 
 
 def default_fleet() -> RecorderFleet:

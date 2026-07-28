@@ -57,8 +57,21 @@ async function ensureOpsKey() {
   localStorage.setItem("soccersnap_ops_key", opsKey);
 }
 
+async function errorFromResponse(res, fallback) {
+  let detail = "";
+  try {
+    const body = await res.json();
+    detail = body.detail?.message || body.detail || "";
+    if (detail && typeof detail !== "string") detail = JSON.stringify(detail);
+  } catch (err) {
+    console.debug("Non-JSON error body", err);
+  }
+  return new Error(detail || `${fallback} (HTTP ${res.status})`);
+}
+
 async function refreshStatus() {
   const res = await fetch("/api/v1/coordinator/status");
+  if (!res.ok) throw await errorFromResponse(res, "Status refresh failed");
   const data = await res.json();
   recording = !!data.recording;
   lastSessionId = data.session_id || lastSessionId;
@@ -76,6 +89,7 @@ preflightBtn.addEventListener("click", async () => {
   preflightBtn.disabled = true;
   try {
     const res = await fetch("/api/v1/coordinator/preflight", { method: "POST" });
+    if (!res.ok) throw await errorFromResponse(res, "Preflight failed");
     const data = await res.json();
     renderCams(data.status?.cameras || []);
     if (data.ok) {
@@ -102,8 +116,8 @@ recordBtn.addEventListener("click", async () => {
         headers: opsHeaders(true),
         body: JSON.stringify({ delay_sec: 0.4 }),
       });
+      if (!res.ok) throw await errorFromResponse(res, "Start failed");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail?.message || JSON.stringify(data.detail || data));
       lastSessionId = data.session_id;
       log(`Scheduled start ${data.scheduled_start} · ${data.session_id}`);
       statusLine.textContent = `Rolling at ${data.scheduled_start}`;
@@ -112,8 +126,8 @@ recordBtn.addEventListener("click", async () => {
         method: "POST",
         headers: opsHeaders(),
       });
+      if (!res.ok) throw await errorFromResponse(res, "Stop failed");
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Stop failed");
       lastSessionId = data.session_id;
       log(`Stopped ${data.session_id} · ${data.flat_manifests?.length || 0} manifests`);
       statusLine.textContent = "Stopped — ready to Process (checksum offload + stitch).";
@@ -138,8 +152,8 @@ processBtn.addEventListener("click", async () => {
       headers: opsHeaders(true),
       body: JSON.stringify({ session_id: lastSessionId, opponent: "Rivals" }),
     });
+    if (!res.ok) throw await errorFromResponse(res, "Process failed");
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Process failed");
     log(`Ready: ${data.session_id} · ${data.events} events`);
     statusLine.textContent = `Game ready — open Watch. ${data.events} events tagged.`;
     if (!document.getElementById("watchLink")) {
@@ -160,7 +174,12 @@ ensureOpsKey()
   .then(() => refreshStatus())
   .catch((err) => {
     statusLine.textContent = `Cannot reach API: ${err.message}`;
+    log(`Startup error: ${err.message}`);
   });
 setInterval(() => {
-  refreshStatus().catch(() => {});
+  refreshStatus().catch((err) => {
+    // Never hide a broken poll behind stale camera tiles.
+    statusLine.textContent = `Status refresh failed: ${err.message}`;
+    console.error("Status refresh failed", err);
+  });
 }, 4000);

@@ -26,7 +26,9 @@ def main(argv: list[str] | None = None) -> None:
         import uvicorn
 
         from soccersnap.config import settings
+        from soccersnap.logging_setup import configure_logging
 
+        configure_logging()
         host = args.host or settings.host
         port = args.port or settings.port
         uvicorn.run("soccersnap.demo.app:create_demo_app", factory=True, host=host, port=port, reload=False)

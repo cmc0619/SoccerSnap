@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     simulate_hardware: bool = True
     max_upload_bytes: int = 2_147_483_648  # 2 GiB
     demo_mode: bool = True
+    log_level: str = "INFO"
 
     def validate_runtime_secrets(self) -> None:
         """Refuse placeholder/blank secrets outside explicit demo mode."""

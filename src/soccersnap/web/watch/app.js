@@ -61,7 +61,10 @@ function renderTimeline(events) {
     );
     btn.addEventListener("click", () => {
       player.currentTime = Number(btn.dataset.ms) / 1000;
-      player.play().catch(() => {});
+      player.play().catch((err) => {
+        // Autoplay policies can block programmatic play; keep the reason visible.
+        console.debug("Playback did not start", err);
+      });
     });
     li.appendChild(btn);
     timeline.appendChild(li);
@@ -79,6 +82,23 @@ function renderChips() {
   }
 }
 
+function showError(message) {
+  gameTitle.textContent = message;
+  gateMsg.textContent = message;
+  console.error(message);
+}
+
+async function describeFailure(res, fallback) {
+  let detail = "";
+  try {
+    const body = await res.json();
+    detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || "");
+  } catch (err) {
+    console.debug("Non-JSON error body", err);
+  }
+  return detail || `${fallback} (HTTP ${res.status})`;
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     credentials: "include",
@@ -94,6 +114,11 @@ async function loadGames() {
   const res = await api(`/api/portal/games?team_code=${encodeURIComponent(session.team_code)}`);
   if (res.status === 401) {
     showGate();
+    gateMsg.textContent = "Session expired — please sign in again.";
+    return;
+  }
+  if (!res.ok) {
+    showError(await describeFailure(res, "Could not load games"));
     return;
   }
   const data = await res.json();
@@ -128,7 +153,15 @@ async function openGame(id, btn) {
   gameList.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
   if (btn) btn.classList.add("active");
   const res = await api(`/api/portal/games/${id}`);
-  if (!res.ok) return;
+  if (res.status === 401) {
+    showGate();
+    gateMsg.textContent = "Session expired — please sign in again.";
+    return;
+  }
+  if (!res.ok) {
+    showError(await describeFailure(res, "Could not open game"));
+    return;
+  }
   currentGame = await res.json();
   gameTitle.textContent = `vs ${currentGame.opponent}`;
   if (currentGame.video_path) {
@@ -145,7 +178,10 @@ async function runSearch(q) {
   const res = await api(
     `/api/portal/search?q=${encodeURIComponent(q)}&game_id=${currentGame.id}`
   );
-  if (!res.ok) return;
+  if (!res.ok) {
+    showError(await describeFailure(res, `Search for “${q}” failed`));
+    return;
+  }
   const data = await res.json();
   renderTimeline(data.results || []);
   gameTitle.textContent = `vs ${currentGame.opponent} · “${q}” (${(data.results || []).length})`;
@@ -165,8 +201,8 @@ loginForm.addEventListener("submit", async (ev) => {
         team_code: fd.get("team_code"),
       }),
     });
+    if (!res.ok) throw new Error(await describeFailure(res, "Login failed"));
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Login failed");
     session = data;
     localStorage.setItem("soccersnap_watch_user", JSON.stringify(session));
     showApp();
@@ -180,11 +216,18 @@ loginForm.addEventListener("submit", async (ev) => {
 searchForm.addEventListener("submit", (ev) => {
   ev.preventDefault();
   const q = new FormData(searchForm).get("q");
-  runSearch(String(q || ""));
+  runSearch(String(q || "")).catch((err) => showError(`Search failed: ${err.message}`));
 });
 
 logoutBtn.addEventListener("click", async () => {
-  await api("/api/portal/logout", { method: "POST" });
+  let res;
+  try {
+    res = await api("/api/portal/logout", { method: "POST" });
+  } catch (err) {
+    showError(`Logout failed: ${err.message}`);
+    return;
+  }
+  if (!res.ok) console.error(await describeFailure(res, "Logout failed"));
   localStorage.removeItem("soccersnap_watch_user");
   session = null;
   showGate();
@@ -206,7 +249,11 @@ logoutBtn.addEventListener("click", async () => {
     // Stale client cache without cookie — force re-login
     localStorage.removeItem("soccersnap_watch_user");
   }
-})();
+})().catch((err) => {
+  showGate();
+  gateMsg.textContent = `Cannot reach SoccerSnap: ${err.message}`;
+  console.error("Boot failed", err);
+});
 
 // silence unused helper when not used for innerHTML paths
 void escapeHtml;
