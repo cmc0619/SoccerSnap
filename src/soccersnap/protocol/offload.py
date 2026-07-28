@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -14,9 +15,22 @@ from soccersnap.protocol.manifests import SessionManifest, load_manifest, mark_o
 # PROTOCOL.md retry table
 BACKOFF_SECONDS = (0, 5, 10, 20, 40)
 
+_UPLOAD_LOCKS: dict[str, threading.Lock] = {}
+_UPLOAD_LOCKS_GUARD = threading.Lock()
+
 
 class OffloadError(Exception):
     pass
+
+
+def _destination_lock(session_id: str, camera_id: str) -> threading.Lock:
+    key = f"{session_id}:{camera_id}"
+    with _UPLOAD_LOCKS_GUARD:
+        lock = _UPLOAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _UPLOAD_LOCKS[key] = lock
+        return lock
 
 
 def store_upload(
@@ -36,31 +50,30 @@ def store_upload(
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_media = dest_dir / "recording.mp4"
     dest_manifest = dest_dir / "manifest.json"
-    # Unique temp + atomic replace avoids concurrent upload clobbering.
-    tmp_media = dest_dir / f".recording.{uuid.uuid4().hex}.mp4"
-    server_checksum = ""
+    # Serialize per camera destination + unique temp + atomic replace.
+    with _destination_lock(session_id, camera_id):
+        tmp_media = dest_dir / f".recording.{uuid.uuid4().hex}.mp4"
+        server_checksum = ""
+        try:
+            shutil.copy2(source_file, tmp_media)
+            server_checksum = sha256_file(tmp_media)
+            if server_checksum.lower() != checksum_hex.lower():
+                raise OffloadError("Post-copy checksum mismatch")
+            tmp_media.replace(dest_media)
+            if manifest is not None:
+                dest_manifest.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        except Exception:
+            tmp_media.unlink(missing_ok=True)
+            raise
 
-    try:
-        shutil.copy2(source_file, tmp_media)
-        server_checksum = sha256_file(tmp_media)
-        if server_checksum.lower() != checksum_hex.lower():
-            raise OffloadError("Post-copy checksum mismatch")
-        tmp_media.replace(dest_media)
-    except Exception:
-        tmp_media.unlink(missing_ok=True)
-        raise
-
-    if manifest is not None:
-        dest_manifest.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
-
-    return {
-        "success": True,
-        "recording_id": f"{session_id}_{camera_id}",
-        "file_size": dest_media.stat().st_size,
-        "checksum_verified": True,
-        "checksum_sha256": server_checksum,
-        "path": str(dest_media),
-    }
+        return {
+            "success": True,
+            "recording_id": f"{session_id}_{camera_id}",
+            "file_size": dest_media.stat().st_size,
+            "checksum_verified": True,
+            "checksum_sha256": server_checksum,
+            "path": str(dest_media),
+        }
 
 
 def confirm_upload(*, sessions_dir: Path, session_id: str, camera_id: str) -> dict:

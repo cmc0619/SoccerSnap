@@ -44,7 +44,14 @@ function renderCams(cameras = []) {
 
 async function ensureOpsKey() {
   if (opsKey) return;
-  const res = await fetch("/api/demo/info");
+  // Ops key is never public — unlock with admin basic auth (demo defaults).
+  const res = await fetch("/api/demo/field-unlock", {
+    method: "POST",
+    headers: {
+      Authorization: "Basic " + btoa("admin:soccersnap"),
+    },
+  });
+  if (!res.ok) throw new Error("Field unlock failed — check admin credentials");
   const data = await res.json();
   opsKey = data.ops_api_key || "";
   localStorage.setItem("soccersnap_ops_key", opsKey);

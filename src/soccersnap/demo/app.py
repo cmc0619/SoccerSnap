@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -17,7 +18,13 @@ from soccersnap.process.app import create_process_router
 from soccersnap.process.pipeline import ProcessPipeline
 from soccersnap.rig.app import create_rig_router
 from soccersnap.rig.coordinator import FleetCoordinator
-from soccersnap.security import PortalPrincipal, assert_game_access, require_ops, require_portal_user
+from soccersnap.security import (
+    PortalPrincipal,
+    assert_game_access,
+    basic_security,
+    require_ops,
+    require_portal_user,
+)
 
 
 WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
@@ -62,14 +69,28 @@ def create_demo_app() -> FastAPI:
             "product": "SoccerSnap",
             "version": __version__,
             "seed": seed_info,
-            # Field UI needs the ops key for confirm/cleanup/process; rotate in production.
-            "ops_api_key": settings.ops_api_key,
             "endpoints": {
                 "field": "/field/",
                 "watch": "/watch/",
                 "docs": "/docs",
             },
         }
+
+    @app.post("/api/demo/field-unlock")
+    def field_unlock(
+        credentials: HTTPBasicCredentials | None = Depends(basic_security),
+    ):
+        """Return ops key only after admin basic auth — never expose it publicly."""
+        if credentials is None or not (
+            credentials.username == settings.admin_user
+            and credentials.password == settings.admin_password
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="Admin credentials required",
+                headers={"WWW-Authenticate": "Basic"},
+            )
+        return {"ops_api_key": settings.ops_api_key}
 
     @app.post("/api/demo/run-match", dependencies=[Depends(require_ops)])
     def run_match(delay_sec: float = 0.05, duration_sec: float = 4.0, opponent: str = "Rivals"):

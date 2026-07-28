@@ -95,12 +95,11 @@ def require_portal_user(
 
 
 def assert_game_access(principal: PortalPrincipal, game: Game) -> None:
+    """Allow any team the user belongs to; selected team is a UI filter, not a hard ACL."""
     if principal.user.role == "admin":
         return
     if game.team_id not in principal.team_ids:
         raise HTTPException(status_code=403, detail="Forbidden for this team")
-    if principal.team and game.team_id != principal.team.id:
-        raise HTTPException(status_code=403, detail="Forbidden for selected team")
 
 
 def verify_user_password(db: Session, username: str, password: str) -> User | None:

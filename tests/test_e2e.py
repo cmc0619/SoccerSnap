@@ -48,7 +48,16 @@ def test_demo_info_and_login(client: TestClient):
     info = client.get("/api/demo/info")
     assert info.status_code == 200
     assert info.json()["product"] == "SoccerSnap"
-    assert info.json()["ops_api_key"] == "test-ops-key"
+    assert "ops_api_key" not in info.json()
+
+    # Public info must not leak ops key; unlock requires admin basic auth.
+    assert client.post("/api/demo/field-unlock").status_code == 401
+    unlocked = client.post(
+        "/api/demo/field-unlock",
+        auth=("admin", "soccersnap"),
+    )
+    assert unlocked.status_code == 200
+    assert unlocked.json()["ops_api_key"] == "test-ops-key"
 
     # Unauthenticated portal access blocked
     denied = client.get("/api/portal/games")
