@@ -7,6 +7,8 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+/* Author display rules must not defeat the hidden attribute. */
+[hidden] { display: none !important; }
 body {
   min-height: 100vh;
   font-family: "Figtree", sans-serif;
