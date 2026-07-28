@@ -21,6 +21,26 @@ class Settings(BaseSettings):
     min_free_gb: float = 1.0
     simulate_hardware: bool = True
     max_upload_bytes: int = 2_147_483_648  # 2 GiB
+    demo_mode: bool = True
+
+    def validate_runtime_secrets(self) -> None:
+        """Refuse placeholder/blank secrets outside explicit demo mode."""
+        if self.demo_mode:
+            return
+        placeholders = {
+            "",
+            "change-me-in-production",
+            "change-me-ops-key",
+            "soccersnap",
+            "soccersnap-dev-secret",
+            "soccersnap-ops",
+        }
+        if self.secret_key in placeholders:
+            raise RuntimeError("SOCCERSNAP_SECRET_KEY must be set to a unique value")
+        if self.ops_api_key in placeholders:
+            raise RuntimeError("SOCCERSNAP_OPS_API_KEY must be set to a unique value")
+        if self.admin_password in placeholders:
+            raise RuntimeError("SOCCERSNAP_ADMIN_PASSWORD must be set to a unique value")
 
     @property
     def recordings_dir(self) -> Path:

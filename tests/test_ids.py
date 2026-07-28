@@ -1,23 +1,22 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
 
-from soccersnap.protocol.ids import validate_camera_id, validate_session_id
+from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
 from soccersnap.protocol.offload import OffloadError, store_upload
 
 
 def test_validate_session_rejects_path_traversal():
-    with pytest.raises(HTTPException):
+    with pytest.raises(InvalidIdError):
         validate_session_id("../evil")
-    with pytest.raises(HTTPException):
+    with pytest.raises(InvalidIdError):
         validate_session_id("GAME/1")
     assert validate_session_id("GAME_20260728_120000") == "GAME_20260728_120000"
 
 
 def test_validate_camera_id():
     assert validate_camera_id("CAM_C") == "CAM_C"
-    with pytest.raises(HTTPException):
+    with pytest.raises(InvalidIdError):
         validate_camera_id("CAM_X")
 
 

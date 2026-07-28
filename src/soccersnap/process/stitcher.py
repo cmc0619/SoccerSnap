@@ -27,5 +27,5 @@ def stitch_hstack(camera_paths: list[Path], output: Path) -> Path:
         "-an",
         str(output),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    subprocess.run(cmd, check=True, capture_output=True, timeout=600)
     return output

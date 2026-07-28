@@ -28,8 +28,8 @@ def camera_present(device: Path = Path("/dev/video0"), *, simulate: bool = False
 
 
 def storage_writable(path: Path) -> GateReport:
-    path.mkdir(parents=True, exist_ok=True)
     try:
+        path.mkdir(parents=True, exist_ok=True)
         probe = path / ".soccersnap-write-test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink(missing_ok=True)
@@ -39,8 +39,11 @@ def storage_writable(path: Path) -> GateReport:
 
 
 def free_space_ok(path: Path, minimum_gb: float) -> GateReport:
-    path.mkdir(parents=True, exist_ok=True)
-    free_gb = shutil.disk_usage(path).free / (1024**3)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        free_gb = shutil.disk_usage(path).free / (1024**3)
+    except OSError as exc:
+        return GateReport(name="disk", ok=False, reason=f"Disk inspection failed: {exc}")
     if free_gb >= minimum_gb:
         return GateReport(name="disk", ok=True, reason=f"{free_gb:.1f}GB free")
     return GateReport(

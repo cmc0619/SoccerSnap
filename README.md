@@ -16,6 +16,7 @@ SoccerSnap consolidates the best ideas from three Traloxolcus prototypes into on
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+# Local demo uses SOCCERSNAP_DEMO_MODE=true defaults (override secrets for anything exposed).
 soccersnap demo
 ```
 
@@ -34,7 +35,12 @@ Ops (confirm/cleanup/upload/process) require header `X-SoccerSnap-Key` (see `/ap
 
 ### Docker
 
+Compose binds `127.0.0.1:7420` and requires unique secrets:
+
 ```bash
+export SOCCERSNAP_SECRET_KEY=$(openssl rand -hex 32)
+export SOCCERSNAP_OPS_API_KEY=$(openssl rand -hex 16)
+export SOCCERSNAP_ADMIN_PASSWORD=$(openssl rand -hex 12)
 docker compose up --build
 ```
 

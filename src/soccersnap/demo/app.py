@@ -31,6 +31,7 @@ WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 
 
 def create_demo_app() -> FastAPI:
+    settings.validate_runtime_secrets()
     settings.ensure_dirs()
     init_db()
     with session_scope() as db:

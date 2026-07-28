@@ -7,8 +7,8 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from soccersnap.models import CameraAsset, Game, GameEvent
-from soccersnap.protocol.checksum import sha256_file, verify_checksum
-from soccersnap.protocol.manifests import SessionManifest, list_manifests, load_manifest
+from soccersnap.protocol.ids import validate_camera_id, validate_session_id
+from soccersnap.protocol.manifests import load_manifest
 from soccersnap.protocol.offload import OffloadError, confirm_upload, store_upload
 from soccersnap.process.events import detect_demo_events
 from soccersnap.process.stitcher import stitch_hstack
@@ -29,11 +29,20 @@ class ProcessPipeline:
         *,
         db: Session | None = None,
     ) -> dict:
-        manifest_path = self.recordings_dir / f"{session_id}_{camera_id}.json"
+        session_id = validate_session_id(session_id)
+        camera_id = validate_camera_id(camera_id)
+        recordings_root = self.recordings_dir.resolve()
+        manifest_path = (recordings_root / f"{session_id}_{camera_id}.json").resolve()
+        if not str(manifest_path).startswith(str(recordings_root)):
+            raise OffloadError("Invalid recording path")
         if not manifest_path.exists():
             raise FileNotFoundError(f"Manifest missing for {session_id}/{camera_id}")
         manifest = load_manifest(manifest_path)
-        media = self.recordings_dir / manifest.file_name
+        if "/" in manifest.file_name or "\\" in manifest.file_name or ".." in manifest.file_name:
+            raise OffloadError("Invalid media file name in manifest")
+        media = (recordings_root / manifest.file_name).resolve()
+        if not str(media).startswith(str(recordings_root)):
+            raise OffloadError("Invalid recording media path")
         if not media.exists():
             raise FileNotFoundError(f"Media missing: {media}")
 
@@ -78,6 +87,7 @@ class ProcessPipeline:
         return {**result, "confirm": confirmed, "manifest": manifest.model_dump(mode="json")}
 
     def ingest_session(self, session_id: str, *, db: Session | None = None) -> list[dict]:
+        session_id = validate_session_id(session_id)
         results = []
         for cam in ("CAM_L", "CAM_C", "CAM_R"):
             path = self.recordings_dir / f"{session_id}_{cam}.json"
@@ -88,25 +98,32 @@ class ProcessPipeline:
         return results
 
     def process_session(self, session_id: str, *, db: Session, opponent: str = "Rivals") -> dict:
+        session_id = validate_session_id(session_id)
+        sessions_root = self.sessions_dir.resolve()
+        media_root = self.media_dir.resolve()
         ingested = self.ingest_session(session_id, db=db)
         cam_paths = []
         duration = 0.0
         for cam in ("CAM_L", "CAM_C", "CAM_R"):
-            media = self.sessions_dir / session_id / cam / "recording.mp4"
+            media = (sessions_root / session_id / cam / "recording.mp4").resolve()
+            if not str(media).startswith(str(sessions_root)):
+                raise OffloadError("Invalid session media path")
             if media.exists():
                 cam_paths.append(media)
-                manifest_path = self.sessions_dir / session_id / cam / "manifest.json"
+                manifest_path = sessions_root / session_id / cam / "manifest.json"
                 if manifest_path.exists():
                     duration = max(duration, load_manifest(manifest_path).video.duration_sec)
 
         if len(cam_paths) < 3:
             raise RuntimeError("Need CAM_L, CAM_C, and CAM_R before processing")
 
-        stitched = self.media_dir / f"{session_id}_stitched.mp4"
+        stitched = (media_root / f"{session_id}_stitched.mp4").resolve()
+        if not str(stitched).startswith(str(media_root)):
+            raise OffloadError("Invalid media output path")
         stitch_hstack(cam_paths, stitched)
 
         events = detect_demo_events(duration or 10.0)
-        events_path = self.media_dir / f"{session_id}_events.json"
+        events_path = media_root / f"{session_id}_events.json"
         events_path.write_text(json.dumps(events, indent=2), encoding="utf-8")
 
         game = db.query(Game).filter_by(session_id=session_id).one_or_none()

@@ -130,7 +130,7 @@ class RecorderFleet:
             "-shortest",
             str(path),
         ]
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
 
     def start(self, session_id: str, scheduled_start: datetime | None = None) -> dict:
         if any(n.recording for n in self.nodes.values()):
