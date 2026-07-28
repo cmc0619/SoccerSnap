@@ -13,6 +13,8 @@ from soccersnap.protocol.query import parse_query, search_events
 from soccersnap.security import (
     PortalPrincipal,
     assert_game_access,
+    client_key,
+    enforce_rate_limit,
     login_session,
     logout_session,
     require_portal_user,
@@ -42,6 +44,7 @@ def create_portal_router() -> APIRouter:
 
     @router.post("/login")
     def login(body: LoginBody, request: Request, db: Session = Depends(get_session)):
+        enforce_rate_limit(client_key(request, "portal-login"), limit=10, window_sec=300.0)
         user = db.query(User).filter_by(username=body.username).one_or_none()
         if not user or not verify_password(body.password, user.password_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials")

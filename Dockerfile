@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir . \
 
 ENV SOCCERSNAP_DATA_DIR=/data
 ENV SOCCERSNAP_DATABASE_URL=sqlite:////data/soccersnap.db
+ENV SOCCERSNAP_DEMO_MODE=false
 ENV SOCCERSNAP_HOST=0.0.0.0
 ENV SOCCERSNAP_PORT=7420
 

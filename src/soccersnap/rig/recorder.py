@@ -9,6 +9,7 @@ from pathlib import Path
 
 from soccersnap.config import settings
 from soccersnap.protocol.checksum import verify_checksum
+from soccersnap.protocol.ids import validate_camera_id, validate_session_id
 from soccersnap.protocol.manifests import (
     CameraId,
     SessionManifest,
@@ -186,7 +187,9 @@ class RecorderFleet:
 
     def confirm(self, request: ConfirmRequest) -> SessionManifest:
         """Chat ConfirmRequest: refuse on checksum mismatch, then mark offloaded."""
-        path = self.base_dir / f"{request.session_id}_{request.camera_id}.json"
+        session_id = validate_session_id(request.session_id)
+        camera_id = validate_camera_id(request.camera_id)
+        path = self.base_dir / f"{session_id}_{camera_id}.json"
         if not path.exists():
             raise FileNotFoundError("Manifest not found")
         manifest = load_manifest(path)
@@ -201,7 +204,7 @@ class RecorderFleet:
             raise ValueError("Checksum mismatch — refusing offload confirm")
         if manifest.checksum.value.lower() != request.checksum.value.lower():
             raise ValueError("Checksum mismatch against stored manifest")
-        marked = mark_offloaded(self.base_dir, request.session_id, request.camera_id)
+        marked = mark_offloaded(self.base_dir, session_id, camera_id)
         if marked is None:
             raise FileNotFoundError("Manifest not found after confirm")
         return marked

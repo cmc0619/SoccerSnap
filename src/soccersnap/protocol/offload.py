@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from soccersnap.protocol.checksum import sha256_file, verify_checksum
+from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
 from soccersnap.protocol.manifests import SessionManifest, load_manifest, mark_offloaded
 
 # PROTOCOL.md retry table
@@ -21,6 +22,14 @@ _UPLOAD_LOCKS_GUARD = threading.Lock()
 
 class OffloadError(Exception):
     pass
+
+
+def _safe_ids(session_id: str, camera_id: str) -> tuple[str, str]:
+    """Reject identifiers that could escape the sessions directory."""
+    try:
+        return validate_session_id(session_id), validate_camera_id(camera_id)
+    except InvalidIdError as exc:
+        raise OffloadError(str(exc)) from exc
 
 
 def _destination_lock(session_id: str, camera_id: str) -> threading.Lock:
@@ -44,13 +53,7 @@ def store_upload(
 ) -> dict:
     """Server-side: receive file, verify SHA-256, store under sessions/{id}/{cam}/."""
     # Keep filesystem writes inside sessions_dir even if callers skip HTTP validation.
-    if not session_id or not camera_id:
-        raise OffloadError("Invalid session_id or camera_id")
-    for value in (session_id, camera_id):
-        if ".." in value or "/" in value or "\\" in value:
-            raise OffloadError("Invalid session_id or camera_id")
-    if camera_id not in {"CAM_L", "CAM_C", "CAM_R"}:
-        raise OffloadError("Invalid camera_id")
+    session_id, camera_id = _safe_ids(session_id, camera_id)
 
     if not verify_checksum(source_file, checksum_hex):
         raise OffloadError("Checksum mismatch on upload")
@@ -89,7 +92,11 @@ def store_upload(
 
 
 def confirm_upload(*, sessions_dir: Path, session_id: str, camera_id: str) -> dict:
-    media = sessions_dir / session_id / camera_id / "recording.mp4"
+    session_id, camera_id = _safe_ids(session_id, camera_id)
+    sessions_root = sessions_dir.resolve()
+    media = (sessions_root / session_id / camera_id / "recording.mp4").resolve()
+    if not str(media).startswith(str(sessions_root)):
+        raise OffloadError("Invalid destination path")
     if not media.exists():
         raise OffloadError("Recording not found on server")
     return {

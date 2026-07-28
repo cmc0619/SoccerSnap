@@ -33,6 +33,16 @@ def seed_demo(db: Session) -> dict:
         db.flush()
         db.add(Membership(user_id=admin.id, team_id=team.id, role="admin", jersey_number=None))
 
+    if not settings.demo_mode:
+        # Known-password watcher accounts exist for the demo only.
+        db.flush()
+        return {
+            "team_code": team.team_code,
+            "team_name": team.name,
+            "admin_user": settings.admin_user,
+            "watchers": [],
+        }
+
     coach = db.query(User).filter_by(username="coach").one_or_none()
     if coach is None:
         coach = User(
