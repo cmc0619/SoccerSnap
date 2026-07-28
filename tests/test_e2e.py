@@ -76,14 +76,24 @@ def test_destructive_rig_requires_ops_auth(client: TestClient):
 
 
 def test_full_match_pipeline(client: TestClient):
-    start = client.post("/api/v1/coordinator/start", json={"delay_sec": 0.0})
+    assert client.post("/api/v1/coordinator/start", json={"delay_sec": 0.0}).status_code == 401
+
+    start = client.post(
+        "/api/v1/coordinator/start",
+        headers=ops_headers(),
+        json={"delay_sec": 0.0},
+    )
     assert start.status_code == 200, start.text
     body = start.json()
     assert body["success"] is True
     assert body["scheduled_start"]
     session_id = body["session_id"]
 
-    stop = client.post("/api/v1/coordinator/stop", params={"duration_sec": 2.5})
+    stop = client.post(
+        "/api/v1/coordinator/stop",
+        headers=ops_headers(),
+        params={"duration_sec": 2.5},
+    )
     assert stop.status_code == 200, stop.text
     assert stop.json()["session_id"] == session_id
     assert len(stop.json()["manifests"]) == 3

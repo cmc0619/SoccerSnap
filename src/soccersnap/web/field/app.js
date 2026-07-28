@@ -95,10 +95,11 @@ preflightBtn.addEventListener("click", async () => {
 recordBtn.addEventListener("click", async () => {
   recordBtn.disabled = true;
   try {
+    await ensureOpsKey();
     if (!recording) {
       const res = await fetch("/api/v1/coordinator/start", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: opsHeaders(true),
         body: JSON.stringify({ delay_sec: 0.4 }),
       });
       const data = await res.json();
@@ -107,7 +108,10 @@ recordBtn.addEventListener("click", async () => {
       log(`Scheduled start ${data.scheduled_start} · ${data.session_id}`);
       statusLine.textContent = `Rolling at ${data.scheduled_start}`;
     } else {
-      const res = await fetch("/api/v1/coordinator/stop?duration_sec=4", { method: "POST" });
+      const res = await fetch("/api/v1/coordinator/stop?duration_sec=4", {
+        method: "POST",
+        headers: opsHeaders(),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Stop failed");
       lastSessionId = data.session_id;

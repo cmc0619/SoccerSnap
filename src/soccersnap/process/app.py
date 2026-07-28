@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from soccersnap.config import settings
 from soccersnap.db import get_session
+from soccersnap.protocol.ids import validate_camera_id, validate_session_id
 from soccersnap.protocol.manifests import SessionManifest
 from soccersnap.protocol.offload import OffloadError, confirm_upload, store_upload
 from soccersnap.protocol.schemas import UploadConfirmRequest
@@ -70,9 +71,15 @@ def create_process_router(
         manifest: str | None = Form(None),
     ):
         settings.ensure_dirs()
+        session_id = validate_session_id(session_id)
+        camera_id = validate_camera_id(camera_id)
         # Unique staging path so concurrent uploads never share filenames.
         upload_id = uuid.uuid4().hex
-        tmp = settings.staging_dir / "uploads" / upload_id / f"{session_id}_{camera_id}.mp4"
+        staging_root = (settings.staging_dir / "uploads").resolve()
+        tmp = staging_root / upload_id / f"{session_id}_{camera_id}.mp4"
+        # Defend against any residual path tricks after validation.
+        if not str(tmp.resolve()).startswith(str(staging_root)):
+            raise HTTPException(status_code=400, detail="Invalid upload path")
         try:
             await _stream_upload_to_temp(file, tmp, settings.max_upload_bytes)
             parsed = SessionManifest.model_validate_json(manifest) if manifest else None
@@ -99,19 +106,22 @@ def create_process_router(
 
     @router.post("/upload/confirm", dependencies=[Depends(require_ops)])
     def upload_confirm(body: UploadConfirmRequest):
+        session_id = validate_session_id(body.session_id)
+        camera_id = validate_camera_id(body.camera_id)
         try:
             return confirm_upload(
                 sessions_dir=pipe.sessions_dir,
-                session_id=body.session_id,
-                camera_id=body.camera_id,
+                session_id=session_id,
+                camera_id=camera_id,
             )
         except OffloadError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.post("/process", dependencies=[Depends(require_ops)])
     def process_session(body: ProcessRequest, db: Session = Depends(get_session)):
+        session_id = validate_session_id(body.session_id)
         try:
-            return pipe.process_session(body.session_id, db=db, opponent=body.opponent)
+            return pipe.process_session(session_id, db=db, opponent=body.opponent)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:
@@ -120,8 +130,9 @@ def create_process_router(
     @router.post("/process/from-rig", dependencies=[Depends(require_ops)])
     def process_from_rig(body: ProcessRequest, db: Session = Depends(get_session)):
         """Ingest local rig recordings (demo path) then stitch + detect events."""
+        session_id = validate_session_id(body.session_id)
         try:
-            return pipe.process_session(body.session_id, db=db, opponent=body.opponent)
+            return pipe.process_session(session_id, db=db, opponent=body.opponent)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except RuntimeError as exc:

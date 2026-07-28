@@ -43,10 +43,22 @@ def store_upload(
     manifest: SessionManifest | None = None,
 ) -> dict:
     """Server-side: receive file, verify SHA-256, store under sessions/{id}/{cam}/."""
+    # Keep filesystem writes inside sessions_dir even if callers skip HTTP validation.
+    if not session_id or not camera_id:
+        raise OffloadError("Invalid session_id or camera_id")
+    for value in (session_id, camera_id):
+        if ".." in value or "/" in value or "\\" in value:
+            raise OffloadError("Invalid session_id or camera_id")
+    if camera_id not in {"CAM_L", "CAM_C", "CAM_R"}:
+        raise OffloadError("Invalid camera_id")
+
     if not verify_checksum(source_file, checksum_hex):
         raise OffloadError("Checksum mismatch on upload")
 
-    dest_dir = sessions_dir / session_id / camera_id
+    sessions_root = sessions_dir.resolve()
+    dest_dir = (sessions_root / session_id / camera_id).resolve()
+    if not str(dest_dir).startswith(str(sessions_root)):
+        raise OffloadError("Invalid destination path")
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_media = dest_dir / "recording.mp4"
     dest_manifest = dest_dir / "manifest.json"
