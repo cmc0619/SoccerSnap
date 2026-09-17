@@ -21,6 +21,22 @@ def _ops_key_valid(provided: str | None) -> bool:
     return bool(provided) and provided == settings.ops_api_key
 
 
+def admin_credentials_valid(credentials: HTTPBasicCredentials | None) -> bool:
+    return (
+        credentials is not None
+        and credentials.username == settings.admin_user
+        and credentials.password == settings.admin_password
+    )
+
+
+def basic_auth_required(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=401,
+        detail=detail,
+        headers={"WWW-Authenticate": "Basic"},
+    )
+
+
 def require_ops(
     x_soccersnap_key: Annotated[str | None, Header(alias="X-SoccerSnap-Key")] = None,
     credentials: HTTPBasicCredentials | None = Depends(basic_security),
@@ -28,19 +44,11 @@ def require_ops(
     """Protect destructive/offload endpoints (confirm, cleanup, upload, process)."""
     if _ops_key_valid(x_soccersnap_key):
         return
-    if credentials is not None:
-        if (
-            credentials.username == settings.admin_user
-            and credentials.password == settings.admin_password
-        ):
-            return
-        if credentials.password == settings.ops_api_key:
-            return
-    raise HTTPException(
-        status_code=401,
-        detail="Ops authentication required",
-        headers={"WWW-Authenticate": "Basic"},
-    )
+    if admin_credentials_valid(credentials):
+        return
+    if credentials is not None and credentials.password == settings.ops_api_key:
+        return
+    raise basic_auth_required("Ops authentication required")
 
 
 @dataclass

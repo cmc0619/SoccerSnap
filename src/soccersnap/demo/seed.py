@@ -21,41 +21,30 @@ def seed_demo(db: Session) -> dict:
         db.add(team)
         db.flush()
 
-    admin = db.query(User).filter_by(username=settings.admin_user).one_or_none()
-    if admin is None:
-        admin = User(
-            username=settings.admin_user,
-            password_hash=hash_password(settings.admin_password),
-            role="admin",
-            display_name="Admin",
+    members = (
+        (settings.admin_user, settings.admin_password, "admin", "Admin", None),
+        ("coach", "coach", "coach", "Coach Avery", None),
+        ("parent", "parent", "parent", "Alex Parent", 9),
+    )
+    for username, password, role, display_name, jersey_number in members:
+        if db.query(User).filter_by(username=username).one_or_none() is not None:
+            continue
+        user = User(
+            username=username,
+            password_hash=hash_password(password),
+            role=role,
+            display_name=display_name,
         )
-        db.add(admin)
+        db.add(user)
         db.flush()
-        db.add(Membership(user_id=admin.id, team_id=team.id, role="admin", jersey_number=None))
-
-    coach = db.query(User).filter_by(username="coach").one_or_none()
-    if coach is None:
-        coach = User(
-            username="coach",
-            password_hash=hash_password("coach"),
-            role="coach",
-            display_name="Coach Avery",
+        db.add(
+            Membership(
+                user_id=user.id,
+                team_id=team.id,
+                role=role,
+                jersey_number=jersey_number,
+            )
         )
-        db.add(coach)
-        db.flush()
-        db.add(Membership(user_id=coach.id, team_id=team.id, role="coach"))
-
-    parent = db.query(User).filter_by(username="parent").one_or_none()
-    if parent is None:
-        parent = User(
-            username="parent",
-            password_hash=hash_password("parent"),
-            role="parent",
-            display_name="Alex Parent",
-        )
-        db.add(parent)
-        db.flush()
-        db.add(Membership(user_id=parent.id, team_id=team.id, role="parent", jersey_number=9))
 
     db.flush()
     return {

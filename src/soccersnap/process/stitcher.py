@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+from soccersnap.ffmpeg import H264_OUTPUT_ARGS, run_ffmpeg
 
 
 def stitch_hstack(camera_paths: list[Path], output: Path) -> Path:
@@ -12,20 +13,15 @@ def stitch_hstack(camera_paths: list[Path], output: Path) -> Path:
     inputs: list[str] = []
     for path in camera_paths:
         inputs.extend(["-i", str(path)])
-    n = len(camera_paths)
-    filter_complex = f"hstack=inputs={n}"
-    cmd = [
-        "ffmpeg",
-        "-y",
-        *inputs,
-        "-filter_complex",
-        filter_complex,
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-an",
-        str(output),
-    ]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+    run_ffmpeg(
+        [
+            *inputs,
+            "-filter_complex",
+            f"hstack=inputs={len(camera_paths)}",
+            *H264_OUTPUT_ARGS,
+            "-an",
+            str(output),
+        ],
+        timeout=600,
+    )
     return output

@@ -29,23 +29,8 @@ def init_db(url: str | None = None) -> None:
     Base.metadata.create_all(bind=engine)
 
 
-@contextmanager
-def session_scope() -> Generator[Session, None, None]:
-    if SessionLocal is None:
-        init_db()
-    assert SessionLocal is not None
-    session = SessionLocal()
-    try:
-        yield session
-        session.commit()
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
 def get_session() -> Generator[Session, None, None]:
+    """Commit-on-success session, used both as a FastAPI dependency and directly."""
     if SessionLocal is None:
         init_db()
     assert SessionLocal is not None
@@ -58,3 +43,6 @@ def get_session() -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+
+
+session_scope = contextmanager(get_session)

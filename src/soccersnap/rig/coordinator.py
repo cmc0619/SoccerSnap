@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from soccersnap.config import settings
 from soccersnap.protocol.gates import run_preflight
 from soccersnap.rig.recorder import RecorderFleet, default_fleet
+from soccersnap.timeutils import iso_utc, seconds_until, utcnow
 
 
 def new_session_id() -> str:
-    return datetime.now(timezone.utc).strftime("GAME_%Y%m%d_%H%M%S")
+    return utcnow().strftime("GAME_%Y%m%d_%H%M%S")
 
 
 class FleetCoordinator:
@@ -76,14 +77,14 @@ class FleetCoordinator:
             }
 
         sid = session_id or new_session_id()
-        master_time = datetime.now(timezone.utc)
+        master_time = utcnow()
         scheduled = master_time + timedelta(seconds=max(0.0, delay_sec))
         self._last_scheduled_start = scheduled
         self._current_session = sid
 
         cameras: dict[str, dict] = {}
         # In-process fleet: wait once to the scheduled instant, then start all.
-        wait = (scheduled - datetime.now(timezone.utc)).total_seconds()
+        wait = seconds_until(scheduled)
         if wait > 0:
             sleep_fn(wait)
 
@@ -92,15 +93,15 @@ class FleetCoordinator:
             cameras[cam["camera_id"]] = {
                 "success": True,
                 "session_id": sid,
-                "scheduled_start": scheduled.isoformat().replace("+00:00", "Z"),
+                "scheduled_start": iso_utc(scheduled),
             }
 
         return {
             "success": True,
             "started": True,
             "session_id": sid,
-            "scheduled_start": scheduled.isoformat().replace("+00:00", "Z"),
-            "master_time": master_time.isoformat().replace("+00:00", "Z"),
+            "scheduled_start": iso_utc(scheduled),
+            "master_time": iso_utc(master_time),
             "cameras": cameras,
             "status": status,
             "preflight": pre,
@@ -123,11 +124,7 @@ class FleetCoordinator:
         return {
             "coordinator": "CAM_C",
             "session_id": self._current_session or status.get("session_id"),
-            "scheduled_start": (
-                self._last_scheduled_start.isoformat().replace("+00:00", "Z")
-                if self._last_scheduled_start
-                else None
-            ),
+            "scheduled_start": iso_utc(self._last_scheduled_start),
             "recording": status["recording"],
             "peers": self.peers(),
             "cameras": status["cameras"],

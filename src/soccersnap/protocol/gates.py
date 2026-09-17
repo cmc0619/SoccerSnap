@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, TypeVar
+
+from soccersnap.paths import free_gb
+
+T = TypeVar("T")
 
 TEMP_LIMIT_C = 85.0
 BATTERY_CRITICAL = 10
@@ -41,16 +44,41 @@ def storage_writable(path: Path) -> GateReport:
 def free_space_ok(path: Path, minimum_gb: float) -> GateReport:
     try:
         path.mkdir(parents=True, exist_ok=True)
-        free_gb = shutil.disk_usage(path).free / (1024**3)
+        free = free_gb(path)
     except OSError as exc:
         return GateReport(name="disk", ok=False, reason=f"Disk inspection failed: {exc}")
-    if free_gb >= minimum_gb:
-        return GateReport(name="disk", ok=True, reason=f"{free_gb:.1f}GB free")
+    if free >= minimum_gb:
+        return GateReport(name="disk", ok=True, reason=f"{free:.1f}GB free")
     return GateReport(
         name="disk",
         ok=False,
-        reason=f"Low disk: {free_gb:.1f}GB < {minimum_gb}GB threshold",
+        reason=f"Low disk: {free:.1f}GB < {minimum_gb}GB threshold",
     )
+
+
+def _sensor_gate(
+    name: str,
+    sensor_path: Path,
+    *,
+    parse: Callable[[str], T],
+    simulated: T | None,
+    within_limits: Callable[[T], bool],
+    describe: Callable[[T], str],
+    refuse: Callable[[T], str],
+) -> GateReport:
+    """Sysfs sensor gate: simulated reading, missing sensor, unreadable, or verdict."""
+    reading = simulated
+    if reading is None:
+        if not sensor_path.exists():
+            return GateReport(name=name, ok=True, reason=f"{name.capitalize()} sensor unavailable")
+        try:
+            reading = parse(sensor_path.read_text().strip())
+        except (OSError, ValueError):
+            return GateReport(name=name, ok=False, reason=f"{name.capitalize()} read failed")
+    if within_limits(reading):
+        # A simulated pass measured nothing, so it reports no reading.
+        return GateReport(name=name, ok=True, reason=None if simulated is not None else describe(reading))
+    return GateReport(name=name, ok=False, reason=refuse(reading))
 
 
 def temperature_safe(
@@ -59,22 +87,15 @@ def temperature_safe(
     simulate: bool = False,
     simulated_c: float = 52.0,
 ) -> GateReport:
-    if simulate:
-        ok = simulated_c < TEMP_LIMIT_C
-        return GateReport(
-            name="temperature",
-            ok=ok,
-            reason=None if ok else f"Overheating: {simulated_c:.1f}C >= {TEMP_LIMIT_C}C",
-        )
-    if not thermal_path.exists():
-        return GateReport(name="temperature", ok=True, reason="Temperature sensor unavailable")
-    try:
-        temp_c = float(thermal_path.read_text().strip()) / 1000.0
-    except (OSError, ValueError):
-        return GateReport(name="temperature", ok=False, reason="Temperature read failed")
-    if temp_c < TEMP_LIMIT_C:
-        return GateReport(name="temperature", ok=True, reason=f"{temp_c:.1f}C")
-    return GateReport(name="temperature", ok=False, reason=f"Overheating: {temp_c:.1f}C >= {TEMP_LIMIT_C}C")
+    return _sensor_gate(
+        "temperature",
+        thermal_path,
+        parse=lambda raw: float(raw) / 1000.0,
+        simulated=simulated_c if simulate else None,
+        within_limits=lambda temp_c: temp_c < TEMP_LIMIT_C,
+        describe=lambda temp_c: f"{temp_c:.1f}C",
+        refuse=lambda temp_c: f"Overheating: {temp_c:.1f}C >= {TEMP_LIMIT_C}C",
+    )
 
 
 def battery_safe(
@@ -83,22 +104,15 @@ def battery_safe(
     simulate: bool = False,
     simulated_percent: int = 88,
 ) -> GateReport:
-    if simulate:
-        ok = simulated_percent > BATTERY_CRITICAL
-        return GateReport(
-            name="battery",
-            ok=ok,
-            reason=None if ok else f"Battery critically low: {simulated_percent}%",
-        )
-    if not capacity_path.exists():
-        return GateReport(name="battery", ok=True, reason="Battery sensor unavailable")
-    try:
-        percent = int(capacity_path.read_text().strip())
-    except (OSError, ValueError):
-        return GateReport(name="battery", ok=False, reason="Battery read failed")
-    if percent > BATTERY_CRITICAL:
-        return GateReport(name="battery", ok=True, reason=f"{percent}%")
-    return GateReport(name="battery", ok=False, reason=f"Battery critically low: {percent}%")
+    return _sensor_gate(
+        "battery",
+        capacity_path,
+        parse=int,
+        simulated=simulated_percent if simulate else None,
+        within_limits=lambda percent: percent > BATTERY_CRITICAL,
+        describe=lambda percent: f"{percent}%",
+        refuse=lambda percent: f"Battery critically low: {percent}%",
+    )
 
 
 def sync_ok(offset_ms: float, limit_ms: float = SYNC_LIMIT_MS) -> GateReport:

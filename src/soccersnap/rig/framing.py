@@ -18,6 +18,14 @@ class FramingResult:
     message: str
     tone_hz: int
 
+    def as_dict(self) -> dict:
+        return {
+            "quality": self.quality.value,
+            "score": self.score,
+            "message": self.message,
+            "tone_hz": self.tone_hz,
+        }
+
 
 # Deterministic simulated framing per camera for demo/preflight.
 _SIM_SCORES = {
