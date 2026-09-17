@@ -13,12 +13,12 @@ SoccerSnap consolidates the best ideas from three Traloxolcus prototypes into on
 ## Quick start
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
+uv sync
 # Local demo uses SOCCERSNAP_DEMO_MODE=true defaults (override secrets for anything exposed).
-soccersnap demo
+uv run soccersnap demo
 ```
+
+Dependencies are pinned in `uv.lock` (see [uv](https://docs.astral.sh/uv/)). Without uv, `pip install -e ".[dev]"` still works but resolves fresh versions instead of the locked ones.
 
 Open [http://127.0.0.1:7420](http://127.0.0.1:7420)
 
@@ -69,8 +69,10 @@ See [`PROTOCOL.md`](PROTOCOL.md).
 ## Develop
 
 ```bash
-pytest
+uv run pytest
 ```
+
+After changing `dependencies` in `pyproject.toml`, run `uv lock` and commit the updated `uv.lock`. Docker builds use `uv sync --locked` and fail if the lock is stale.
 
 Layout:
 
