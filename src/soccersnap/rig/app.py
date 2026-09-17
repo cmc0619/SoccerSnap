@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
 from soccersnap.config import settings
+from soccersnap.media import FFmpegError
 from soccersnap.protocol.ids import InvalidIdError, validate_camera_id, validate_session_id
 from soccersnap.protocol.schemas import (
     ConfirmRequest,
@@ -12,6 +13,7 @@ from soccersnap.protocol.schemas import (
 )
 from soccersnap.rig.coordinator import FleetCoordinator
 from soccersnap.rig.framing import assess_framing
+from soccersnap.rig.recorder import RecorderError
 from soccersnap.security import require_ops
 
 
@@ -62,6 +64,8 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     def coordinator_stop(duration_sec: float | None = None):
         try:
             return coord.stop_all(duration_sec=duration_sec)
+        except (FFmpegError, RecorderError) as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -95,6 +99,8 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
     def record_stop():
         try:
             return coord.stop_all()
+        except (FFmpegError, RecorderError) as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -115,8 +121,16 @@ def create_rig_router(coordinator: FleetCoordinator | None = None) -> APIRouter:
 
     @router.post("/recordings/cleanup", dependencies=[Depends(require_ops)])
     def recordings_cleanup():
-        removed = coord.fleet.cleanup_offloaded()
-        return {"removed": removed}
+        result = coord.fleet.cleanup_offloaded()
+        if result["failed"]:
+            raise HTTPException(
+                status_code=500,
+                detail={
+                    "message": "Some offloaded recordings could not be deleted",
+                    **result,
+                },
+            )
+        return result
 
     @router.get("/framing/{camera_id}")
     def framing(camera_id: str):

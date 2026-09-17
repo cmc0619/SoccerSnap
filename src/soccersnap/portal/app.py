@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -17,6 +18,17 @@ from soccersnap.security import (
     logout_session,
     require_portal_user,
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _event_payload(event: GameEvent) -> dict:
+    """Decode a stored event payload; a corrupt row must not break the response."""
+    try:
+        return json.loads(event.payload_json or "{}")
+    except (TypeError, ValueError) as exc:
+        logger.error("Corrupt payload_json on game_event %s: %s", event.id, exc)
+        return {}
 
 
 class LoginBody(BaseModel):
@@ -159,7 +171,7 @@ def create_portal_router() -> APIRouter:
                 "confidence": e.confidence,
                 "jersey_number": e.jersey_number,
                 "label": e.label,
-                "payload": json.loads(e.payload_json or "{}"),
+                "payload": _event_payload(e),
             }
             for e in sorted(g.events, key=lambda x: x.t_start_ms)
         ]
@@ -195,7 +207,7 @@ def create_portal_router() -> APIRouter:
                 "t_end_ms": e.t_end_ms,
                 "jersey_number": e.jersey_number,
                 "label": e.label,
-                "payload": json.loads(e.payload_json or "{}"),
+                "payload": _event_payload(e),
             }
             for e in query.all()
         ]

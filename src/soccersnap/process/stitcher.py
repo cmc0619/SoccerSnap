@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
+
+from soccersnap.media import run_ffmpeg
 
 
 def stitch_hstack(camera_paths: list[Path], output: Path) -> Path:
@@ -27,5 +28,5 @@ def stitch_hstack(camera_paths: list[Path], output: Path) -> Path:
         "-an",
         str(output),
     ]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+    run_ffmpeg(cmd, timeout=600, context=f"Stitch {output.name}")
     return output

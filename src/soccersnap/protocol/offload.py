@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import shutil
 import threading
 import time
@@ -11,6 +12,8 @@ from typing import Callable
 
 from soccersnap.protocol.checksum import sha256_file, verify_checksum
 from soccersnap.protocol.manifests import SessionManifest, load_manifest, mark_offloaded
+
+logger = logging.getLogger(__name__)
 
 # PROTOCOL.md retry table
 BACKOFF_SECONDS = (0, 5, 10, 20, 40)
@@ -75,6 +78,7 @@ def store_upload(
             if manifest is not None:
                 dest_manifest.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
         except Exception:
+            logger.exception("Store upload failed for %s/%s", session_id, camera_id)
             tmp_media.unlink(missing_ok=True)
             raise
 
@@ -135,6 +139,14 @@ def offload_with_retry(
             if server_checksum.lower() != expected.lower():
                 raise OffloadError("Confirm checksum mismatch — will retry upload")
             marked = mark_offloaded(mark_dir, session_id, camera_id)
+            if marked is None:
+                # Upload succeeded but the local manifest vanished; cleanup will skip it.
+                logger.error(
+                    "Cannot mark %s/%s offloaded: manifest missing under %s",
+                    session_id,
+                    camera_id,
+                    mark_dir,
+                )
             return {
                 "success": True,
                 "attempts": attempt + 1,
@@ -145,9 +157,28 @@ def offload_with_retry(
             }
         except OffloadError as exc:
             last_error = exc
+            logger.warning(
+                "Offload attempt %d/%d failed for %s/%s: %s",
+                attempt + 1,
+                max_attempts,
+                session_id,
+                camera_id,
+                exc,
+            )
             continue
         except Exception as exc:  # network-ish
-            last_error = OffloadError(str(exc))
+            last_error = exc
+            logger.warning(
+                "Offload attempt %d/%d errored for %s/%s: %s",
+                attempt + 1,
+                max_attempts,
+                session_id,
+                camera_id,
+                exc,
+                exc_info=True,
+            )
             continue
 
-    raise OffloadError(f"Offload failed after {max_attempts} attempts: {last_error}")
+    raise OffloadError(
+        f"Offload failed after {max_attempts} attempts for {session_id}/{camera_id}: {last_error}"
+    ) from last_error

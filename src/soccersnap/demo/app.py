@@ -12,12 +12,15 @@ from soccersnap import __version__
 from soccersnap.config import settings
 from soccersnap.db import init_db, session_scope
 from soccersnap.demo.seed import seed_demo
+from soccersnap.logging_setup import configure_logging
+from soccersnap.media import FFmpegError
 from soccersnap.models import Game
 from soccersnap.portal.app import create_portal_router
 from soccersnap.process.app import create_process_router
 from soccersnap.process.pipeline import ProcessPipeline
 from soccersnap.rig.app import create_rig_router
 from soccersnap.rig.coordinator import FleetCoordinator
+from soccersnap.rig.recorder import RecorderError
 from soccersnap.security import (
     PortalPrincipal,
     assert_game_access,
@@ -31,6 +34,7 @@ WEB_ROOT = Path(__file__).resolve().parent.parent / "web"
 
 
 def create_demo_app() -> FastAPI:
+    configure_logging()
     settings.validate_runtime_secrets()
     settings.ensure_dirs()
     init_db()
@@ -101,13 +105,19 @@ def create_demo_app() -> FastAPI:
         start = coordinator.start_all(delay_sec=delay_sec)
         if not start.get("success"):
             raise HTTPException(status_code=409, detail=start)
-        stop = coordinator.stop_all(duration_sec=duration_sec)
+        try:
+            stop = coordinator.stop_all(duration_sec=duration_sec)
+        except (FFmpegError, RecorderError) as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         session_id = stop["session_id"]
         assert SessionLocal is not None
         db = SessionLocal()
         try:
             processed = pipeline.process_session(session_id, db=db, opponent=opponent)
             db.commit()
+        except FFmpegError as exc:
+            db.rollback()
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception:
             db.rollback()
             raise

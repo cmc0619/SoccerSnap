@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .checksum import sha256_file
+
+logger = logging.getLogger(__name__)
 
 
 class CameraId(str, Enum):
@@ -141,11 +144,20 @@ class SessionManifest(BaseModel):
 
 
 def parse_resolution(resolution: str) -> ResolutionBlock:
+    """Parse `WxH`, falling back to the default resolution with a warning."""
     try:
         w, h = resolution.lower().split("x", 1)
         return ResolutionBlock(width=int(w), height=int(h))
-    except Exception:
-        return ResolutionBlock()
+    except (AttributeError, ValueError, ValidationError) as exc:
+        default = ResolutionBlock()
+        logger.warning(
+            "Unparseable resolution %r (%s); defaulting to %dx%d",
+            resolution,
+            exc,
+            default.width,
+            default.height,
+        )
+        return default
 
 
 def create_manifest(
@@ -286,6 +298,7 @@ def list_manifests(directory: Path) -> list[SessionManifest]:
     for path in sorted(directory.glob("*.json")):
         try:
             out.append(load_manifest(path))
-        except Exception:
-            continue
+        except (OSError, ValueError, ValidationError) as exc:
+            # A single unreadable manifest must not hide the rest of the fleet.
+            logger.error("Skipping unreadable manifest %s: %s", path, exc)
     return out
